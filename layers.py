@@ -3,7 +3,7 @@
 """
 Created on Sat Jun 12 10:00:28 2021
 
-@author: MarianPanya
+@author: MarianPanyar
 
 
 """
@@ -11,42 +11,30 @@ Created on Sat Jun 12 10:00:28 2021
 
 
 import numpy as np
-import scipy
+import scipy.ndimage
 #import matplotlib.pyplot as plt 
 
 
-class Layer(object):
-
+class Layer(object):    #P class
     def __init__(self,csize):
-        self.csize=csize  #input size, a list
-    #forward: forward，including train and predict
-    #init_train: forward and , layer by layer
-    #train: train
+        self.csize=csize  #input size as list
     
-    def forward(self,indata):
+    def forward(self,indata):   #fire (and predict) without training
         raise NotImplementedError()
         
-    def init_train(self,indata):   #(if needed) build matrices and train in layer itself
-        outdata = self.forward(indata)
-        return outdata
-        #initial and training in each layer. Should be overwrite when init_train is really needed.
-    
-    def us_train(self,indata): #for layers not trainable
-        outdata = self.forward(indata)
+    def init_train(self,indata):   #(if needed) build matrices and train layer by layer
+        outdata = self.forward(indata)   #for layers not trainable. Should be overwrite when needed.
         return outdata
     
-    def SEGsv_train(self,indata,label): #for layers not trainable
-        outdata = self.us_train(indata)
+    def us_train(self,indata):    #unsupervised train, layer by layer
+        outdata = self.forward(indata)     #for layers not trainable. Should be overwrite when needed.
         return outdata
 
         
-class flat(Layer):
-    #2D(or more) to 1D
+class flat(Layer):    #2D(or more) to 1D
     def __init__(self,W2,FD):
-        #W2: where to flat, the lower dimention
-        #FD: how many dimentions to flat
-        self.W2=W2
-        self.FD=FD
+        self.W2=W2   #W2: where to flat, the lower dimention
+        self.FD=FD   #FD: how many dimentions to flat
         
     def forward(self,indata):
         S1 = list(indata.shape)
@@ -57,24 +45,18 @@ class flat(Layer):
         return outdata
 
 
-class bipolar(Layer):
-    #center-on or center-off neurons. sharpen the image 
-    def __init__(self,csize,radius,beth,mode='on'):
-        #creat a on-off center filter
-        #csize: size of 2D data
-        #radius: radius of peripheral depression
-        #beth: peripheral haro weight
-        #mode: on-center, off-center, on+off center
-        self.csize=csize
-        self.radius=radius
-        self.beth=beth
-        self.mode=mode
+class bipolar(Layer):    #center-on or center-off neurons. sharpen the image 
+    def __init__(self,csize,radius,halo,mode='on'):
+        self.csize=csize     #csize: size of 2D data
+        self.radius=radius   #radius of peripheral depression
+        self.halo=halo   #peripheral haro weight
+        self.mode=mode  #on:on-center, off:off-center, abs:on+off center
         
     def forward(self,data):
         sqdata = np.reshape(data,(len(data),self.csize[0],self.csize[1]))
         g_data = scipy.ndimage.gaussian_filter1d(sqdata,sigma=self.radius,axis=1)
         g_data = scipy.ndimage.gaussian_filter1d(g_data,sigma=self.radius,axis=2)
-        on_center = sqdata-self.beth*g_data
+        on_center = sqdata-self.halo*g_data
         if self.mode=='on':
             osqdata=on_center
         elif self.mode=='off':
@@ -84,41 +66,41 @@ class bipolar(Layer):
         outdata = np.reshape(osqdata,(len(data),self.csize[0]*self.csize[1]))
         return outdata
 
-class oneHot(Layer):   #Last dimension one hot
-    #only the max-firing pixel remain(in a column)
-    def __init__(self,mode=0):
-        self.mode = mode   #OneZero mode convert all max element to 1
+class oneHot(Layer):   #all elements to 0 except max NE elements, for last dimension
+    #works for hi-dim
+    def __init__(self,NE=0):
+        self.NE = NE   #numbers of elite
         
     def forward(self,mx):
-        #one hot bmu*rate array(convert non-max rate unit to 0). 
-        #works for hi-dim
-        mxT = mx.T
-        mxT[mxT != mxT.max(0)] = 0
-        if self.mode == 'OneZero':
-            mxT[mxT == mxT.max(0)] = 1
-        return mxT.T
+        mxS = np.sort(mx,axis=-1)
+        thres = mxS[...,-self.NE]
+        thresMX = np.repeat(thres[...,np.newaxis],mx.shape[-1],axis=-1)
+        newmx = mx+0
+        newmx[newmx<thresMX]=0
+        return newmx
+    
+class EP(Layer):   #Elements less than ep to 0
+    def __init__(self,ep=0):
+        self.ep = ep
+        
+    def forward(self,mx):
+        newmx = mx+0
+        newmx[newmx<self.ep]=0
+        return newmx
 
 
-class CaP(Layer):
-    #pooling & convolution 
-    #csize: size of oringinal square, should be like [x,y]
-    #diameter: size of pooling diameter
-    #stride: stride center to center. 
-    def __init__(self,csize,diameter,stride=1,W2=1):
-        self.csize=csize
-        self.diameter=diameter
-        self.stride=stride
-        self.W2=W2
+class CaP(Layer):    #pooling & convolution 
+    def __init__(self,csize,diameter,stride=1):
+        self.csize=csize   #size of square to pool or convo, should be like [x,y]
+        self.diameter=diameter   #diameter: size of pooling diameter
+        self.stride=stride   #stride center to center. 
         self.out_index,v_noc,h_noc = pl_index(csize[0],csize[1],self.diameter,stride)
 
 class convolution(CaP):
     #cut one sample into squares
     def __init__(self,csize,dia,stride=1,W2=1):
-        #csize: original size [x,y]
-        #radius: radius of kernel, diameter = 2*radius+1
-        #print(csize)
         super().__init__(csize,dia,stride)
-        self.W2=W2
+        self.W2=W2   #where 2 convo
 
     def forward(self,data):
         #output all tiles as 1D array, for training or forwarding
@@ -131,12 +113,11 @@ class convolution(CaP):
         return tile_data
     
     
-class padding(Layer):
-    #padding
+class padding(Layer):  #padding
     def __init__(self,pd_size,margin,mode):
         self.pd_size = pd_size  #padding input size
-        self.margin = margin
-        self.mode = mode
+        self.margin = margin  
+        self.mode = mode   #padding mode: constant,edge,minimum,reflect
         
     def forward(self,indata):
         sqdata = indata.reshape(list(np.shape(indata)[:-1])+self.pd_size)
@@ -145,13 +126,16 @@ class padding(Layer):
         outdata = sqoutdata.reshape(sqoutdata.shape[:-2]+(-1,))
         return outdata
     
-class Norm(Layer): #normalization   
+class norm(Layer): #normalization   
     def __init__(self,mode):
         self.mode = mode
     
     def forward(self,data):  #universal normalization tool, now works for hi-dim
         #UV mode: Unit Vector, default, keep dot(A,A)=1
-        norm_mode = self.mode
+        newdata = self.normalize(data,self.mode)
+        return newdata
+        
+    def normalize(self,data,norm_mode='UV'):
         if norm_mode=='Z':  #make mean=0,std=1
             mean = np.mean(data,axis=-1,keepdims=True)
             mean = np.tile(mean,data.shape[-1])
@@ -164,8 +148,7 @@ class Norm(Layer): #normalization
             ma = np.tile(ma,data.shape[-1])
             newdata = (data-mi)/(ma-mi+0.0000001)
         elif norm_mode=='UV':   #keep dot(A,A)=1
-            nr = np.linalg.norm(data,axis=-1,keepdims=True)/np.shape(data)[-1]
-            nr = np.tile(nr,data.shape[-1])*data.shape[-1]
+            nr = np.linalg.norm(data,axis=-1,keepdims=True)
             newdata = data/(nr+0.0000001)
         elif norm_mode=='MMZ':   #keep mean=0, max-min=1
             mean = np.mean(data,axis=-1,keepdims=True)
@@ -176,25 +159,35 @@ class Norm(Layer): #normalization
         elif norm_mode=='OneMean':
             mean = np.mean(data,axis=-1,keepdims=True)
             mean = np.tile(mean,data.shape[-1])
-            newdata = data/mean
-        elif norm_mode=='UVp':
-            nr = np.linalg.norm(data,axis=-1,keepdims=True)/np.shape(data)[-1]
-            nr = np.tile(nr,data.shape[-1])*data.shape[-1]
-            newdata = data/(nr+0.0000001)
-            newdata = self.Pre(newdata)
+            newdata = data/mean    
         return newdata
     
-    def Pre(self,data):
-        avgdata = np.average(data,axis=0)
+class deleuze(Layer):   #data to difference
+    def __init__(self,mode):
+        self.mode = mode    #not ready yet
+        
+    def forward(self,data):
+        dim = len(data.shape)
+        d2a = tuple(np.arange(dim-1))
+        avgdata = np.average(data,axis=d2a)
         newdata = data-avgdata
         return newdata
 
-#%%
-#neural layers
+class salience(Layer):    # sum<TP, tiles to 0
+    def __init__(self,TP):
+        self.TP = TP
+    
+    def forward(self,data):
+        avgsum = np.average(np.sum(data,axis=-1))
+        TPsum = avgsum*self.TP
+        newdata = data+0
+        newdata[np.sum(newdata,axis=-1)<TPsum]=0
+        return newdata
+    
         
 class NN(Layer):
     #normal neural gas layer, no pooling, no apmx. yes RN.
-    #211119 new version: both supervised and unsupervised. apmx, delta & prediction outside in Models
+    #211119 new version: supervised and unsupervised inside layer; apmx, delta & prediction outside in Models
     def __init__(self,nnodes,RN,alpha,beta,gamma,delta,ep,stepL,inMD,reSL):
         self.nnodes = nnodes     #number of nodes in matrix
         self.RN = RN             #random noise level
@@ -235,8 +228,7 @@ class NN(Layer):
             ma = np.tile(ma,data.shape[-1])
             newdata = (data-mi)/(ma-mi+0.0000001)
         elif norm_mode=='UV':   #keep dot(A,A)=1
-            nr = np.linalg.norm(data,axis=-1,keepdims=True)/np.shape(data)[-1]
-            nr = np.tile(nr,data.shape[-1])*data.shape[-1]
+            nr = np.linalg.norm(data,axis=-1,keepdims=True)
             newdata = data/(nr+0.0000001)
         elif norm_mode=='MMZ':   #keep mean=0, max-min=1
             mean = np.mean(data,axis=-1,keepdims=True)
@@ -290,22 +282,12 @@ class NN(Layer):
     
     def SEGtrain(self,segdata,trRN,alpha,beta):  #training in one segament
         frRT = self.firing(self.bsmx,segdata,self.metmx)  #do not call self.forward cause it might be rewriten
-        
-        #segdata = self.EPfilter(segdata,frRT,self.ep)
-        frRT = self.EPfilter(frRT,frRT,self.ep)  
-        
+   
         self.bsmx = self.BSMXtrain(segdata,trRN,alpha)  #train bsmx
         self.metmx = self.metTrain(self.metmx,frRT,beta)
         #show_dia = int(len(self.bsmx[0])**(1/2))
         #plt.matshow(np.reshape(self.bsmx[0],(show_dia,show_dia)))
         return self.metmx  #whatever
-
-    
-    def EPfilter(self,fEdata,sDdata,EP):   #filter by delete max data less than EP, used on outdata
-        fdata = fEdata[np.max(sDdata,axis=-1)>EP]
-        print(len(fEdata),len(fdata))
-        return fdata
-    
     
     def BSMXtrain(self,segdata,trRN,alpha,frRT=None):   #train bsmx only
         if frRT is None:
@@ -334,7 +316,8 @@ class NN(Layer):
         
     def firing(self,mx,data,metmx):   #frRT: fire rate with metricMX
         dtrt = np.dot(data,mx.T)   #dtrt: dot fire rate, not final fire rate
-        frRT = dtrt**(self.reSL**metmx)   #use self.reSL here, to get a better curve
+        dt_sign = np.sign(dtrt)
+        frRT = dt_sign*(abs(dtrt)**(self.reSL**metmx))   #use self.reSL here, to get a better curve
         #!!!do NOT normalize result   !!!but must normlize input
         return frRT
         
@@ -364,7 +347,7 @@ class NN_MP(NN):   #training & maxpooling layer. Only init_train and us_train. s
     def __init__(self,nnodes,MPsize,MPdia,MPstride,RN,alpha,beta,gamma,delta,ep,stepL,inMD,reSL,TP,SPlim):
         super().__init__(nnodes,RN,alpha,beta,gamma,delta,ep,stepL,inMD,reSL)
         self.SPlim = SPlim    #bsdata training sample limit
-        self.TP = TP
+        self.TP = TP      #TP filter
         self.MPsize = MPsize     #maxpooling 2D size like [a,b]
         self.MPdia = MPdia        #maxpooling tiles diameter
         self.MPstride = MPstride    #maxpooling stride
@@ -384,20 +367,10 @@ class NN_MP(NN):   #training & maxpooling layer. Only init_train and us_train. s
         return outdata
         
     def bsPre(self,HDdata,TP):  #hiDimentional data to 1D, and delete non_saliency samples
-        HDdata = self.HDnorm(HDdata)  #normalize in a HD block, to seprate strong and weak
         bsdata = self.left_flat(HDdata)
         bsdata = self.TPfilter(bsdata,bsdata,TP)  #delete weak tiles
         #bsdata = self.normalize(bsdata,'UV')   #prepare 1D training data
         return bsdata
-    
-    def HDnorm(self,HDdata):
-        Hs = HDdata.shape
-        asdata = HDdata.reshape(Hs[0:-2]+tuple([Hs[-2]*Hs[-1]]))
-        asdata = self.normalize(asdata,'OneMean')
-        asdata = asdata/Hs[-1]
-        #print(np.sum(asdata,axis=-1)[3:13])
-        nHDdata = asdata.reshape(Hs)
-        return nHDdata
         
     def TPfilter(self,fEdata,sDdata,TP):   #filter, delete data when sDdata tiles' sum greater than TP
         #fEdata: data to be filtered; sDdata: data as filter standard
