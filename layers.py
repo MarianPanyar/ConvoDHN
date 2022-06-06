@@ -194,7 +194,7 @@ class NN(Layer):
         self.alpha = alpha       #bsmx learning rate
         self.beta = beta         #metmx learning rate
         self.gamma = gamma   #metmx init value
-        self.delta = delta       #u_sample/sample value ratio, must be int
+        self.delta = delta       #label/sample weight ratio
         self.ep = ep             #EPfilter threshold
         self.stepL = stepL       #training step length
         self.inMD = inMD         #init-matrix mode, 'sample' or 'TR'
@@ -202,17 +202,30 @@ class NN(Layer):
         #self.TP = TP         #firing threshold potential
     
     
-    def init_train(self,bsdata):   #train basal matrix (bsmx) without supervise
-        bsdata = self.normalize(bsdata,'UV')   #prepare 1D training data
+    def init_train(self,bsdata,label,nlb):   #train basal matrix (bsmx) without supervise
+        duodata = self.zipper(bsdata,label,nlb,self.delta)  #zip bsdata and label, normalization included
         
-        self.bsmx = self.mxinit(bsdata,self.nnodes,self.inMD)  #creat basal matrix
+        self.bsmx = self.mxinit(duodata,self.nnodes,self.inMD)  #creat basal matrix
         self.metmx = np.ones(self.nnodes)*self.gamma  #creat metric matrix, all 0s
         
-        self.BUKtrain(bsdata,self.stepL,self.beta)      #train matrix
+        self.BUKtrain(duodata,self.stepL,self.beta)      #train matrix
         
-        outdata = self.firing(self.bsmx,bsdata,self.metmx)   #output
+        outdata = self.Pfiring(self.bsmx,bsdata,self.metmx)   #output
         return outdata
     
+    def zipper(self,bsdata,label,nlb,Lweight):    #zip bsdata and labels, norm included
+        bsdata = self.normalize(bsdata,'UV')   #prepare 1D training data
+        dlen = len(bsdata)
+        onehotLB = np.zeros((dlen,nlb))     #prepare onehot label matrix
+        
+        Tlabel = label.astype(int)
+        onehotLB[range(dlen),Tlabel] = Lweight
+        #NO NEED to norm cause each row has only one 1
+        
+        duodata = np.hstack([bsdata,onehotLB])
+        duodata = self.normalize(duodata,'UV')
+        return duodata
+        
         
     def normalize(self,data,norm_mode='UV'):  #universal normalization tool, now works for hi-dim
         #UV mode: Unit Vector, default, keep dot(A,A)=1
@@ -254,9 +267,10 @@ class NN(Layer):
         return matrix
     
     
-    def us_train(self,bsdata): #unsupervised train bsmx  
-        self.BUKtrain(bsdata,self.stepL,self.beta)  #train bsmx and metmx
-        outdata = self.firing(self.bsmx,bsdata,self.metmx)  #output
+    def us_train(self,bsdata,label,nlb): #unsupervised train bsmx  
+        duodata = self.zipper(bsdata,label,nlb,self.delta) 
+        self.BUKtrain(duodata,self.stepL,self.beta)  #train bsmx and metmx
+        outdata = self.Pfiring(self.bsmx,bsdata,self.metmx)  #output
         return outdata
     
 
@@ -313,6 +327,15 @@ class NN(Layer):
         print('metmx avg = ',np.sum(self.metmx)/self.nnodes)
         #print('frRT = ',frRT)
         return metmx
+    
+    def Pfiring(self,mx,data,metmx):   #when width of data smaller than mx, fill with 0s
+        Plen = mx.shape[-1]-data.shape[-1]   #how much smaller
+        onehotLB = np.zeros((len(data),Plen))     #prepare onehot label matrix
+        duodata = np.hstack([data,onehotLB])
+        #NO NEED more normalize cause only add 0s
+        frRT = self.firing(mx,duodata,metmx)
+        return frRT
+
         
     def firing(self,mx,data,metmx):   #frRT: fire rate with metricMX
         dtrt = np.dot(data,mx.T)   #dtrt: dot fire rate, not final fire rate
@@ -320,6 +343,7 @@ class NN(Layer):
         frRT = dt_sign*(abs(dtrt)**(self.reSL**metmx))   #use self.reSL here, to get a better curve
         #!!!do NOT normalize result   !!!but must normlize input
         return frRT
+    
         
     def find_bmu(self,frRT):   #best match unit, works even for high dimention 
         bmu = np.argmax(frRT,axis=-1)
@@ -338,7 +362,7 @@ class NN(Layer):
     
     def forward(self,indata):   #forward without training, output to next layer
         indata = self.normalize(indata,'UV')
-        outdata = self.firing(self.bsmx,indata,self.metmx)
+        outdata = self.Pfiring(self.bsmx,indata,self.metmx)
         #outdata = self.rt2oh(bsrt) #one hot
         return outdata
     

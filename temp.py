@@ -28,7 +28,8 @@ test_data = np.loadtxt(data_path + "mnist_test.csv",
 label = train_data[:,0]
 raw_tdata = train_data[:,1:]
 ts_data = test_data[:,1:]
-ts_label = test_data[:,0] 
+ts_label = test_data[:,0]
+
 
 #%%
 
@@ -47,7 +48,7 @@ beta = 0.02
 #CF = 0
 SPlim = 2000
 gamma = 0
-delta = 25
+delta = 0.8
 ep = 0
 nnodes = 30
 #capa = 4
@@ -67,6 +68,47 @@ T_label = label[:datalen]
 
 
 
+
+
+#%%
+
+
+flow_size = [datalen,[28,28]]
+A = model(flow_size,alpha,beta,gamma,delta,ep,RN,stepL,inMD,reSL,TP,SPlim)
+#A.add('Norm','UVp')
+A.add('NN',600,alpha=0.2,beta=0.1,stepL=10000,inMD='sample')
+
+
+
+#%%
+T_data = raw_tdata[:datalen]
+T_label = label[:datalen]
+
+A.frame[-1].delta = 0.8
+
+outdata = A.init_train(T_data,T_label,10)
+
+A.frame[-1].alpha = 0.2
+A.frame[-1].beta = 0.1
+import timeit
+
+A.frame[-1].delta = 0.3
+
+start = timeit.default_timer()
+
+Tdata = raw_tdata[10000:40000]
+Tlabel = label[10000:40000]
+A.So_train(Tdata,Tlabel,10,3,1)
+
+stop = timeit.default_timer()
+
+print('Time: ', stop - start)  
+
+#outdata = A.sv_train(bsdata,t_label)
+
+#frrt = np.dot(raw_tdata[20000:40000],A.frame[0].bsmx.T)
+#bmu = np.argmax(frrt,axis=-1)
+#np.unique(bmu,return_counts=True)
 #%%
 
 #NN(nnodes(required),RN,alpha,beta,stepL,inMD,reSL,TP)
@@ -102,38 +144,31 @@ A.add('NN',128,alpha=0.2,beta=0.1,ep=0.7,stepL=300,inMD='sample')
 #A.add('GG',nnodes,RN,stepL,inMD,reSL)
 
 #%%
-
-
-flow_size = [datalen,[28,28]]
-A = model(flow_size,alpha,beta,gamma,delta,ep,RN,stepL,inMD,reSL,TP,SPlim)
-#A.add('Norm','UVp')
-A.add('NN',200,alpha=0.2,beta=0.01,stepL=800,inMD='sample')
-
-
-
-#%%
-T_data = raw_tdata[:datalen]
-T_label = label[:datalen]
-
-A.So_train(T_data,T_label,10,2)
-
-
-#%%
-T_data = raw_tdata[:datalen]
-outdata = A.init_train(T_data)
-#outdata = A.sv_train(bsdata,t_label)
-
-#frrt = np.dot(raw_tdata[20000:40000],A.frame[0].bsmx.T)
-#bmu = np.argmax(frrt,axis=-1)
-#np.unique(bmu,return_counts=True)
+B2L = A.find_B2L(A.frame[-1].bsmx,10)
+outdata = A.forward(ts_data)
+A.So_test(outdata,ts_label,B2L)
 #%%
 #outdata = A.us_train(bsdata)
 U_data = raw_tdata[20000:30000]
-Tlist = [1,1,1,1,1,1,1,1,3]
+U_label = label[20000:30000]
+Tlist = 1
 #Tlist = [1,1]
-outdata = A.us_train(U_data,Tlist)
+outdata = A.us_train(U_data,U_label,10,0.3,Tlist)
 
 
+#%%
+A.frame[-1].alpha = 0.2
+A.frame[-1].beta = 0.15
+Tdata = raw_tdata[10000:40000]
+Tlabel = label[10000:40000]
+A.So_train(Tdata,Tlabel,10,1,1,0.25)
+
+#%%
+A.frame[-1].alpha = 0.2
+A.frame[-1].beta = 0.1
+Tdata = raw_tdata[30000:40000]
+Tlabel = label[30000:40000]
+A.So_train(Tdata,Tlabel,10,1,1,0.3)
 #%%
 #LLsv_train(indata,label,nlb(required),stepL,delta)
 A.frame[-3].alpha = 0
@@ -155,7 +190,10 @@ outdata = A.LLsv_train(bsdata,t_label,nlb,400)
 
 #%%
 import matplotlib.pyplot as plt 
-bs4 = A.frame[-3].bsmx
+bsmx = A.frame[-1].bsmx[:,:-10]
+plt.matshow(bsmx[3].reshape(28,28))
+#%%
+bs4 = A.frame[-1].bsmx
 for i in range(10):
     plt.matshow(bs4[i].reshape(5,5))
 

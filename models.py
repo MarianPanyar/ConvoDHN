@@ -141,27 +141,77 @@ class model(object):
         del layer
         return self.frame
     
-    def So_train(self,indata,label,nlb,nloops):  #Sol supervised training
-        Adata = indata   
-        Alabel = label
+    def init_train(self,indata,label,nlb):  #unsuperviesd train each layer one by one
+        for i in self.frame:
+            outdata = i.init_train(indata,label,nlb)
+            indata = outdata
+            print(type(i).__name__,np.shape(outdata))
+        outdata = self.forward(indata)
+
+        return outdata
+    
+#    def init_train(self,indata,label,nlb,Lweight):  #unsuperviesd train each layer one by one
+#        for i in self.frame:
+#           outdata = i.init_train(indata,label,nlb,Lweight)
+#            indata = outdata
+#            print(type(i).__name__,np.shape(outdata))      
+#        return outdata
+    
+    def us_train(self,indata,label,nlb,Tlist):
+        for i in self.frame:
+            outdata = i.us_train(indata,label,nlb)
+            indata = outdata
+            print(type(i).__name__,np.shape(outdata))
+        #outdata = self.forward(indata)
+        return outdata
+#    def us_train(self,indata,label,nlb,Lweight,Tlist):   #unsupervised train after init
+        #Tlist:training cirles for each layer, like [1,1,1,3]
+#        ct=0
+#        for i in self.frame:
+#            for j in range(Tlist[ct]):
+#                outdata = i.us_train(indata,label,nlb,Lweight)
+#            indata = outdata   #data flow only 
+#            ct=ct+1
+#        return outdata
+    
+
+    def So_train(self,indata,label,nlb,nloops,Tlist):  #Sol supervised training
+        Adata = indata+0    
+        Alabel = label+0
         
-        for i in range(nloops):
+        i = self.frame[-1]
+        #i.init_train(Adata,Alabel,nlb,Lweight)
+
+        for j in range(nloops):
             
-            for i in self.frame:    #init_train all layers
-                Aoutdata = i.init_train(Adata)
-                Adata = Aoutdata
-                
-            Elist = self.sLLtestTrain(Aoutdata,Alabel,nlb)
+            for k in range(Tlist):
+                i.us_train(Adata,Alabel,nlb)
+            Aoutdata = i.forward(Adata)
+            B2L = self.find_B2L(i.bsmx,nlb)
+            Elist = self.So_test(Aoutdata,Alabel,B2L)
+            print(sum(Elist))
             Sodata = Adata[np.where(Elist==0)]
+            print(len(Sodata))
             Solabel = Alabel[np.where(Elist==0)]
             
             Adata = np.concatenate((Adata,Sodata),axis=0)
             Alabel = np.concatenate((Alabel,Solabel),axis=0)
             print(len(Adata))
             
-            Adata,Alabel = self.S_shuffle(Adata,Alabel)
+            #Adata,Alabel = self.S_shuffle(Adata,Alabel)
         return Elist
-            
+    
+    def find_B2L(self,bsmx,nlb):
+        tailmx = bsmx[:,-nlb:]
+        B2L = np.argmax(tailmx,axis=-1)
+        return B2L
+    
+    def So_test(self,outdata,label,B2L):
+        bmu = self.find_bmu(outdata)
+        p_label = B2L[bmu]
+        Elist = self.verf(p_label,label)
+        return Elist
+        
             
     def S_shuffle(self,arrayA,arrayB):
         Sindex = np.random.permutation(len(arrayA))
@@ -179,6 +229,13 @@ class model(object):
         
         Elist = self.verf(testP_label,test_label)
         return Elist
+    
+    def forward(self,indata): #pure forward without training or prediction
+        for i in self.frame:
+            outdata = i.forward(indata)
+            indata = outdata
+        return outdata
+    
     
     def sLLtestTrain(self,outdata,label,nlb):
         LLapmx = self.LLapmxTrain(outdata,label,self.frame[-1].nnodes,nlb)
