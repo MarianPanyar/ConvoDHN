@@ -74,7 +74,7 @@ importlib.reload(models)
 
 #%%
 
-datalen = 50000
+datalen = 20000
 
 flow_size = [datalen,[28,28]]
 
@@ -82,29 +82,30 @@ A = model(flow_size)
 
 #A.add('padding',1,'constant')
 
-
-
-#A.add('onoff','0.01')
 A.add('norm','UV')
 
-A.add('CNP',20,4,1,1,2,2,'no',alpha=1,beta=4,gamma=1.4,delta=0.3,ep=0.1,stepL=1000,reSL=0.8,TP=(0.2,2),SPlim=6)
+#A.add('salience',0.01)
+A.add('CNP',50,4,1,1,3,2,alpha=1,beta=5,gamma=1.5,delta=0.01,stepL=1000,inMD='sample',TP=(0.3,1.2,0.0014),SPlim=1)
 #A.add('deleuze',0)
 A.add('salience',2)
-#A.add('oneHot',0.1,'drop')
+#A.add('oneHot',0.3,'drop')
 #A.add('oneHot',0.8,'relu')
 A.add('oneHot',7,'delete')
-#A.add('oneHot',0.8,'thres')
+#A.add('oneHot',0.67,'thres')
+
 #A.add('EP',0.95)
 
 #A.add('Flat',1,2)
-A.add('CNP',40,4,1,2,3,2,'no',alpha=1,beta=4,gamma=1.6,delta=0.3,ep=0,stepL=1000,reSL=0.7,TP=(0.1,900),SPlim=3)
+A.add('CNP',100,4,1,2,3,2,alpha=1,beta=5,gamma=1.5,delta=0.2,stepL=1000,inMD='sample',TP=(85,140,0.0001),SPlim=1)
 #A.add('salience',2)
 #A.add('oneHot',0.1,'relu')
-#A.add('oneHot',0.1,'drop')
-A.add('oneHot',15,'delete')
-#A.add('oneHot',0.2,'thres')
+#A.add('oneHot',0.3,'drop')
+A.add('oneHot',20,'delete')
+#A.add('oneHot',0.3,'thres')
 A.add('flat',1,2)
-A.add('NN',1200,'no',alpha=1,beta=4,gamma=1.8,delta=1.9,ep=0,stepL=5000,inMD=0,reSL=0.5)
+A.add('NN',2000,alpha=1.2,beta=5,gamma=1.4,delta=0.6,ep=0,stepL=5000,inMD='sample')
+
+
 
 
 #%%
@@ -119,11 +120,22 @@ start = timeit.default_timer()
 Tdata = AtRdata[:datalen]
 Tlabel = AtRlabel[:datalen]
 #A.SoL_train(Tdata,Tlabel,ts_data,ts_label,10,10,1)
-A.So_train(Tdata,Tlabel,ts_data,ts_label,10,2,1,2)
+Elist = A.So_train(Tdata,Tlabel,ts_data,ts_label,10,1,1)
 
 stop = timeit.default_timer()
 
 print('Time: ', stop - start) 
+
+#%%
+
+
+#%%
+
+Ldl = 100000
+TLdata = AtRdata[datalen:datalen+Ldl]
+TLlabel = AtRlabel[datalen:datalen+Ldl]
+
+A.Lus_train(TLdata,TLlabel,ts_data,ts_label,10,20000)
 
 #outdata = A.sv_train(bsdata,t_label)
 
@@ -134,11 +146,6 @@ print('Time: ', stop - start)
 #B2L = A.find_B2L(A.frame[-1].bsmx,10)
 #outdata = A.Tforward(ts_data)
 #A.So_test(outdata,ts_label,B2L)
-
-#%%
-outdata = A.forward(Tdata)
-            #self.So_test(outdata,tlabel,B2L)
-A.Mtest(outdata,A.frame[-1].bsmx,10,Tlabel,2)
 
 #%%
 B2L = A.find_B2L(A.frame[-1].bsmx,10)
@@ -642,15 +649,86 @@ def shift_image(image, dx, dy):
                 dx = i*hsize*stride+j*stride+(dx%dia)+hsize*(dx//dia)
                 index.append(dx)
         return np.array(index),v_noc,h_noc
+#%%
+def BP(data,radius,halo,mode):
+    sqdata = np.reshape(data,(len(data),28,28))
+    g_data = scipy.ndimage.gaussian_filter1d(sqdata,sigma=radius,axis=1)
+    g_data = scipy.ndimage.gaussian_filter1d(g_data,sigma=radius,axis=2)
+    on_center = sqdata*(256-halo*g_data)
+    if mode=='on':
+        osqdata=on_center
+    elif mode=='off':
+        osqdata=-on_center
+    elif mode=='abs':
+        osqdata=abs(on_center)
+    outdata = np.reshape(osqdata,(len(data),784))
+    return outdata
+
+#%%
+def BP1(data,ft,md):
+    Mdata = data - np.mean(data)
+    aodata = scipy.ndimage.convolve(Mdata, ft, mode='constant', cval=0.0)
+    aodata[aodata<0]=0
+    outdata = aodata/md+Mdata
+    outdata[outdata<0]=0
+    return outdata
     
 #%%
-        def DD(mx,NE):
-            mxS = np.sort(mx,axis=-1)
-            thres = mxS[...,NE]
-            thresMX = np.repeat(thres[...,np.newaxis],mx.shape[-1],axis=-1)
-            newmx = mx+0
-            newmx[newmx<thresMX]=0
-            return newmx
-
+for i in range(10):
+    D2 = BP1(U3[i],k,12)
+    plt.matshow(D2)
+#%%
+for i in range(10):
+    plt.matshow(U3[i])
+    
+    
+#%%
+# first a conservative filter for grayscale images will be defined.def conservative_smoothing_gray(data, filter_size):temp = []
+    # first a conservative filter for grayscale images will be defined.
+def conservative_smoothing_gray(data, filter_size):
+    temp = []
+    indexer = filter_size // 2
+    
+    new_image = data.copy()
+    
+    nrow, ncol = data.shape
+    
+    for i in range(nrow):
+        
+        for j in range(ncol):
+            
+            for k in range(i-indexer, i+indexer+1):
+                
+                for m in range(j-indexer, j+indexer+1):
+                    
+                    if (k > -1) and (k < nrow):
+                        
+                        if (m > -1) and (m < ncol):
+                            
+                            temp.append(data[k,m])
+                            
+            temp.remove(data[i,j])
+            
+            
+            max_value = max(temp)
+            
+            min_value = min(temp)
+            
+            if data[i,j] > max_value:
+                
+                new_image[i,j] = max_value
+            
+            elif data[i,j] < min_value:
+                
+                new_image[i,j] = min_value
+            
+            temp =[]
+    
+    return new_image.copy()    
+    
+    
+    
+    
+    
     
     

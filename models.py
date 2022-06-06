@@ -44,11 +44,6 @@ class model(object):
             layer = oneHot(P1,P2)  #P1=mode
             print('OneHot: keep top ',P1,' values, Mode ',P2)
             
-        #elif what=='onoff':
-        #    layer = onoff(P1)  #P1=mode
-        #    self.flow_size[-1] = self.flow_size[-1]*2
-        #    print('OnOff:',self.flow_size)
-            
         elif what=='flat':
             layer = flat(P1,P2)  #reshape 2 or more dimensionss into one
             #P1=W2: which dimension to flat,(the lower one)
@@ -62,7 +57,7 @@ class model(object):
             print('Flatten: ',self.flow_size,', Flat',P2,'Dims from Dim',P1)
         
         elif what=='NN': #single-column layer
-            layer = NN(P1,P2,RN,alpha,beta,gamma,delta,ep,stepL,inMD,reSL)   #P1=nnodes,P2=onoff mode
+            layer = NN(P1,RN,alpha,beta,gamma,delta,ep,stepL,inMD,reSL)   #P1=nnodes
             self.flow_size[-1] = P1
             print('NN: ',self.flow_size, 'Matrix size = ',P1)
             
@@ -75,8 +70,8 @@ class model(object):
             if P4 == 2:
                 self.flow_size.pop(-P4)
 
-            layer = CNP(P1,Csize,P2,P3,P4,P5,P6,P7,RN,alpha,beta,gamma,delta,ep,stepL,inMD,reSL,TP,SPlim)
-            #P1=nnodes,P2=CVdia,P3=CVstride,P4=CVw2,P5=MPdia,P6=MPstride,P7=onoffmode
+            layer = CNP(P1,Csize,P2,P3,P4,P5,P6,RN,alpha,beta,gamma,delta,ep,stepL,inMD,reSL,TP,SPlim)
+            #P1=nnodes,P2=CVdia,P3=CVstride,P4=CVw2,P5=MPdia,P6=MPstride
             MPsize = self.flow_size[-2]
             out_index,v_noc,h_noc = self.pl_index(MPsize[0],MPsize[1],P5,P6) #vertical & horizontal size
             self.flow_size[-1] = P1             
@@ -127,8 +122,9 @@ class model(object):
         for i in self.frame:
             #start = timeit.default_timer()
             outdata = i.init_train(indata,label,nlb)
+            
             if type(i)==NN:
-                for j in range(i.inMD):  #if ep>0
+                for j in range(i.ep):  #if ep>0
                     outdata = i.us_train(indata,label,nlb)
                     print('us_train')
             indata = outdata
@@ -138,7 +134,7 @@ class model(object):
            #print('Time: ', stop - start) 
         return outdata
     
-    def So_train(self,indata,label,tdata,tlabel,nlb,nloops,Esp,NE):  #Sol supervised training
+    def So_train(self,indata,label,tdata,tlabel,nlb,nloops,Esp):  #Sol supervised training
         Adata = indata+0    
         Alabel = label+0
         
@@ -150,8 +146,8 @@ class model(object):
             #self.us_train(Adata,Alabel,nlb,Tlist)
             
             #Aoutdata = self.forward(Adata)
-            #B2L = self.find_B2L(self.frame[-1].bsmx,nlb)
-            p_label,Elist = self.Mtest(Aoutdata,self.frame[-1].bsmx,10,Alabel,NE)
+            B2L = self.find_B2L(self.frame[-1].bsmx,nlb)
+            p_label,Elist = self.So_test(Aoutdata,Alabel,B2L)
             print(sum(Elist))
             
             Sodata = Adata[np.where(Elist==0)]
@@ -164,14 +160,45 @@ class model(object):
             Alabel = np.concatenate((Alabel,Solabel),axis=0)
             print(len(Adata))
             
-            #B2L = self.find_B2L(self.frame[-1].bsmx,10)
+            B2L = self.find_B2L(self.frame[-1].bsmx,10)
             outdata = self.TBUKforward(tdata,self.frame[-1].stepL)
-            #self.So_test(outdata,tlabel,B2L)
-            self.Mtest(outdata,self.frame[-1].bsmx,10,tlabel,NE)
-
+            self.So_test(outdata,tlabel,B2L)
+            
             #Adata,Alabel = self.S_shuffle(Adata,Alabel)
             #shuffle in BUKtrain
         return Elist
+    
+    def Lus_train(self,indata,label,tdata,tlabel,nlb,LstepL):  #last layer train 
+        #LstepL: long step length, longer than stepL
+        ct = 0  #sample counting
+        nos = len(indata)//LstepL  #number of steps
+        print('steps = ',nos)
+        
+        for i in range(nos):
+            #trRN = self.RN*(1-i/nos)  #RN decrease every step, Simulated Annealing
+            #alpha = self.alpha*(1-i/nos)
+            segdata = indata[ct:ct+LstepL] #cut segdata
+            seglabel = label[ct:ct+LstepL]
+            
+            #reSL = (self.beta-self.gamma)*(i/(nos-1))+self.gamma
+            
+            self.segLus_train(segdata,seglabel,nlb) #train bsmx  
+            ct = ct + LstepL
+            
+            B2L = self.find_B2L(self.frame[-1].bsmx,10)
+            outdata = self.TBUKforward(tdata,self.frame[-1].stepL)
+            p_label,Elist = self.So_test(outdata,tlabel,B2L)
+        return Elist
+        
+    
+    def segLus_train(self,indata,label,nlb):
+        c=1
+        for i in self.frame:
+            outdata = i.us_train(indata,label,nlb)
+            indata = outdata
+            c+=1                
+        return outdata
+            
 
     def SoL_train(self,indata,label,tdata,tlabel,nlb,nloops,Esp):  #Sol supervised training
         
@@ -239,23 +266,6 @@ class model(object):
         p_label = B2L[bmu]
         Elist = self.verf(p_label,label)
         return p_label,Elist
-    
-    def Mtest(self,frRT,bsmx,nlb,label,NE):
-        DfrRT = self.delFR(frRT,NE)
-        tailmx = bsmx[:,-nlb:]
-        PRmx = np.dot(DfrRT,tailmx)
-        p_label = np.argmax(PRmx,axis=-1)
-        Elist = self.verf(p_label,label)
-        return p_label,Elist
-        
-    def delFR(self,mx,NE):
-        mxS = np.sort(mx,axis=-1)
-        RE = mx.shape[-1]-NE
-        thres = mxS[...,RE]
-        thresMX = np.repeat(thres[...,np.newaxis],mx.shape[-1],axis=-1)
-        newmx = mx+0
-        newmx[newmx<thresMX]=0
-        return newmx        
         
             
     def S_shuffle(self,arrayA,arrayB):   #

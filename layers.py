@@ -102,6 +102,8 @@ class oneHot(Layer):   #all elements to 0 except max NE elements, for last dimen
             newmx = self.forward(mx)
         return newmx
 
+
+        
     
     
 class padding(Layer):  #padding
@@ -166,27 +168,25 @@ class salience(Layer):    # sum<TP, tiles to 0
 class NN(Layer):
     #normal neural gas layer, no pooling, no apmx. yes RN.
     #211119 new version: supervised and unsupervised inside layer; apmx, delta & prediction outside in Models
-    def __init__(self,nnodes,oomode,RN,alpha,beta,gamma,delta,ep,stepL,inMD,reSL):
+    def __init__(self,nnodes,RN,alpha,beta,gamma,delta,ep,stepL,inMD,reSL):
         self.nnodes = nnodes     #number of nodes in matrix
-        self.oomode = oomode
         self.RN = RN             #random noise level
         self.alpha = alpha       #bsmx learning rate
         self.beta = beta         #hit freq factor, beginning, should >1
         self.gamma = gamma       #hit freq factor, ending
         self.delta = delta       #sample/label weight ratio, Lweight
-        self.ep = ep             #alpha curve power
+        self.ep = ep             #unsuperviesd learning times
         self.stepL = stepL       #training step length
-        self.inMD = inMD         #us training times
-        self.reSL = reSL         #av curve power
+        self.inMD = inMD         #init-matrix mode, 'sample' or 'TR'
+        self.reSL = reSL         #N/A
         #self.TP = TP         #firing threshold potential
     
     
     def init_train(self,bsdata,label,nlb):   #train basal matrix (bsmx) without supervise
-        oodata = self.onoff(bsdata,self.oomode)
-        #onoffdata = self.normalize(onoffdata,'UV')   #prepare 1D training data
-        duodata = self.zipper(oodata,label,nlb,self.delta)  #zip bsdata and label, normalization included
+        bsdata = self.normalize(bsdata,'UV')   #prepare 1D training data
+        duodata = self.zipper(bsdata,label,nlb,self.delta)  #zip bsdata and label, normalization included
         
-        self.bsmx = self.mxinit(duodata,self.nnodes,'sample')  #creat basal matrix
+        self.bsmx = self.mxinit(duodata,self.nnodes,self.inMD)  #creat basal matrix
         
         self.BUKtrain(duodata,self.stepL)      #train matrix
         
@@ -194,25 +194,6 @@ class NN(Layer):
         #bmu = self.find_bmu(outdata)
         #uni,s_freq = np.unique(bmu,return_counts=True)
         #print(uni,s_freq)
-        return outdata
-    
-    def onoff(self,indata,oomode):
-        Tdim = tuple(np.arange(indata.ndim))
-        mean = np.mean(indata,axis=Tdim[:-1])
-        
-        ONdata = indata-mean
-        OFFdata = 0-ONdata
-        ONdata[ONdata<0]=0
-        
-        if oomode=='on':
-            outdata = ONdata
-        elif oomode=='onoff':
-            OFFdata[OFFdata<0]=0
-            outdata = np.concatenate((ONdata,OFFdata),axis=-1)
-        else:
-            outdata = indata
-            
-        outdata = self.normalize(outdata)
         return outdata
     
     def zipper(self,bsdata,label,nlb,Lweight):    #zip bsdata and labels, norm included
@@ -256,7 +237,7 @@ class NN(Layer):
         return newdata
     
     
-    def mxinit(self,indata,nnodes,initMod='sample'):  #bsmx init
+    def mxinit(self,indata,nnodes,initMod):  #bsmx init
         if initMod == 'sample':         #choose random sample from indata
             flatdata = indata.reshape(np.prod(np.shape(indata)[:-1]),np.shape(indata)[-1]) #in case HDdata
             index = np.random.randint(len(flatdata),size=nnodes)
@@ -268,9 +249,6 @@ class NN(Layer):
     
     
     def us_train(self,bsdata,label,nlb): #unsupervised train bsmx
-        if self.oomode == 'onoff' or 'on':
-            bsdata = self.onoff(bsdata,self.oomode)
-            
         bsdata = self.normalize(bsdata,'UV')   #prepare 1D training data
         duodata = self.zipper(bsdata,label,nlb,self.delta) 
         self.BUKtrain(duodata,self.stepL)  #train bsmx and metmx
@@ -292,10 +270,10 @@ class NN(Layer):
         print(nos)
         for i in range(nos):
             trRN = self.RN*(1-i/nos)  #RN decrease every step, Simulated Annealing
-            alpha = self.alpha*((1-i/nos)**2)
+            alpha = self.alpha*(1-i/nos)
             segdata = bsdataT[ct:ct+stepL] #cut segdata
-            reSL = (self.beta-self.gamma)*((1-i/nos)**self.reSL)+self.gamma
-            #print(reSL)
+            reSL = (self.beta-self.gamma)*(i/(nos-1))+self.gamma
+            
             self.SEGtrain(segdata,trRN,alpha,reSL) #train bsmx  
             ct = ct + stepL
         return self.bsmx #not return frRT, because shuffled frRT is meaningless
@@ -305,33 +283,17 @@ class NN(Layer):
 
         dlen = len(segdata)
         av = int(dlen*reSL//self.nnodes)  #max limit of fire freq 
-        #print('av = ',av)
         frRT = self.firing(self.bsmx,segdata)
 
         Ebmu = self.find_Ebmu(frRT,av)
         #print(Ebmu.shape,max(Ebmu),bsmxp.shape,frRTp.shape)
-        self.bsmx = self.SOMtrain(dlen,self.bsmx,Ebmu,segdata,alpha,frRT,self.ep)
-        #for i in range(dlen):
-            #self.bsmx[Ebmu[i]] += segdata[i]*alpha*(frRT[i][Ebmu[i]])
+        for i in range(dlen):
+            self.bsmx[Ebmu[i]] += frRT[i][Ebmu[i]]*segdata[i]*alpha
             #core of training. If frRT[a,b]==0, bsmx no change
         self.bsmx += trRN*self.inRN(self.bsmx)*dlen   #use random trRN
         #print(self.bsmx)
         self.bsmx = self.normalize(self.bsmx)  #normalize after learning and RNing
         return self.bsmx
-    
-    def SOMtrain(self,dlen,bsmx,Ebmu,segdata,alpha,frRT,ep):
-        nnodes = bsmx.shape[0]
-        for i in range(dlen):
-            bsmx[(Ebmu[i]-2)%nnodes] += segdata[i]*alpha*(frRT[i][(Ebmu[i]-2)%nnodes])*(ep**2)
-            bsmx[(Ebmu[i]-1)%nnodes] += segdata[i]*alpha*(frRT[i][(Ebmu[i]-1)%nnodes])*ep
-            bsmx[Ebmu[i]] += segdata[i]*alpha*(frRT[i][Ebmu[i]])
-            bsmx[(Ebmu[i]+1)%nnodes] += segdata[i]*alpha*(frRT[i][(Ebmu[i]+1)%nnodes])*ep
-            bsmx[(Ebmu[i]+2)%nnodes] += segdata[i]*alpha*(frRT[i][(Ebmu[i]+2)%nnodes])*(ep**2)
-        return bsmx
-
-
-        
-        
 
     
     def Pfiring(self,mx,data):   #when width of data smaller than mx, fill with 0s
@@ -355,11 +317,12 @@ class NN(Layer):
     def find_Ebmu(self,frRT,av):  #bmu with equality 
         MfrRT = np.pad(frRT,((0,0),(1,0)),'constant')  #add 0s as node #0, for argmax of 0s column = 0 
         bmu = np.zeros(len(frRT))   #creat empty bmu list to fill
-        #print(av)
+        
         for i in range(frRT.shape[-1]):      
             Tbmu = np.argmax(MfrRT,axis=-1)  #calculate bmu every loop 
             uni,s_freq = np.unique(Tbmu,return_counts=True)
             MXnode = uni[np.argmax(s_freq[1:])+1] #find out nodes that fires most
+            
             if np.max(s_freq[1:])>av:  #first node(0s) not included
                 MXf = MfrRT[:,MXnode]   #select its frRT
                 bmS = np.argpartition(MXf, -av)[-av:]  #findout top samples 
@@ -369,7 +332,6 @@ class NN(Layer):
              
             else:
                 bmu[Tbmu>0]=Tbmu[Tbmu>0]   #fill rest of bmus
-                #print('Frn = ',s_freq[0])
                 break #stop until no hit freq>av
         bmu = (bmu-1).astype(int)   #remove 0s column
         return bmu
@@ -387,9 +349,8 @@ class NN(Layer):
         return freq
     
     def forward(self,indata):   #forward without training, output to next layer
-        #indata = self.normalize(indata,'UV')
-        indata = self.onoff(indata,self.oomode)
-        #print(indata.shape)
+        indata = self.normalize(indata,'UV')
+
         outdata = self.Pfiring(self.bsmx,indata)
         #print(len(outdata))
         #outdata = self.rt2oh(bsrt) #one hot
@@ -401,12 +362,32 @@ class NN(Layer):
         return outdata
     
     
-
+class NN_MP(NN):   #training & maxpooling layer. 
+    def __init__(self,nnodes,MPsize,MPdia,MPstride,RN,alpha,beta,gamma,delta,ep,stepL,inMD,reSL,TP,SPlim):
+        super().__init__(nnodes,RN,alpha,beta,gamma,delta,ep,stepL,inMD,reSL)
+        self.SPlim = SPlim    #bsdata training sample limit
+        self.TP = TP      #TP filter 
+        self.MPsize = MPsize     #maxpooling 2D size like [a,b]
+        self.MPdia = MPdia        #maxpooling tiles diameter
+        self.MPstride = MPstride    #maxpooling stride
+        
+    def init_train(self,HDdata,label,nlb):   #build and unsupervised train
+        #HDdata: data blocks made by convolution, shape be like (dlen,14*14,5*5)
+        #HDdata = self.normalize(HDdata)
+        #HD normalization for TPfilter
+        bsdata,bslabel = self.bsPre(HDdata,label,self.TP)
+        bsdata,bslabel = self.SPfilter(bsdata,bslabel,self.SPlim)
+        
+        bsdata = self.normalize(bsdata,'UV')   #prepare 1D training data
+        duodata = self.zipper(bsdata,bslabel,nlb,self.delta)  #zip bsdata and label, normalization included
+        self.BSin_train(duodata,self.nnodes,'sample',self.stepL)
+        outdata = self.BUKforward(HDdata,self.stepL) #use HDdata for output outdata
+        return outdata
     
     
 class CNP(NN):
-    def __init__(self,nnodes,Csize,CVdia,CVstride,CVw2,MPdia,MPstride,oomode,RN,alpha,beta,gamma,delta,ep,stepL,inMD,reSL,TP,SPlim):
-        super().__init__(nnodes,oomode,RN,alpha,beta,gamma,delta,ep,stepL,inMD,reSL)
+    def __init__(self,nnodes,Csize,CVdia,CVstride,CVw2,MPdia,MPstride,RN,alpha,beta,gamma,delta,ep,stepL,inMD,reSL,TP,SPlim):
+        super().__init__(nnodes,RN,alpha,beta,gamma,delta,ep,stepL,inMD,reSL)
         self.SPlim = SPlim    #bsdata training sample limit, for every sample
         self.TP = TP      #TP filter 
         self.Csize = Csize     #input 2D size like [a,b]
@@ -418,9 +399,7 @@ class CNP(NN):
         
     def init_train(self,indata,label,nlb):   #build and unsupervised train
         duodata = self.tile_c(indata,label,nlb)
-        #print(duodata.shape)
         self.BSin_train(duodata,self.nnodes,'sample',self.stepL)
-        #print(self.bsmx.shape)
         outdata = self.forward(indata)
         return outdata
         
@@ -432,12 +411,7 @@ class CNP(NN):
         bslabel = np.repeat(label,self.SPlim)
         bsdata,bslabel = self.TPfilter(bsdata,bslabel,self.TP)  #delete weak tiles
         bsdata = self.normalize(bsdata,'UV')   #prepare 1D training data
-        
-        if self.oomode == 'onoff' or 'on':
-            oodata = self.onoff(bsdata,self.oomode)
-        else:
-            oodata = bsdata
-        duodata = self.zipper(oodata,bslabel,nlb,self.delta)  #zip bsdata and label, normalization included
+        duodata = self.zipper(bsdata,bslabel,nlb,self.delta)  #zip bsdata and label, normalization included
         return duodata
     
     def BSin_train(self,duodata,nnodes,inMD,stepL):
@@ -448,12 +422,28 @@ class CNP(NN):
     def TPfilter(self,data,label,TP):   #filter, delete data when sDdata tiles' sum greater than TP
         #fEdata: data to be filtered; sDdata: data as filter standard
         TileSum = np.sum(data,axis=-1)
-        index = np.where((TileSum>TP[0])&(TileSum<TP[1]))
+        Ms = self.MSE(data)
+        index = np.where((TileSum>TP[0])&(TileSum<TP[1])&(Ms>TP[2]))
         fdata = data[index]
         flabel = label[index]
         print(len(data),len(fdata),TP)
         return fdata,flabel
-
+    
+    def MSE(self,data):
+        Adata = np.mean(data,axis=-1)
+        Amx = np.repeat(Adata[...,np.newaxis],data.shape[-1],axis=-1)
+        SQ = (data-Amx)**2
+        Ms = np.mean(SQ,axis=-1)
+        return Ms
+    
+    def Tforward(self,indata):  #forward with maxpooling
+        HDdata,CVx,CVy = self.conv2D(indata)
+        HDfrRT = super().forward(HDdata)
+        #print(HDdata.shape,HDfrRT.shape)
+        tile_frRT,tile_index = self.MPtiles(HDfrRT,CVx,CVy)  #maxpooling index
+        outdata = np.max(tile_frRT,axis=-2)  #max fire rate of every node in every tile
+        #e.g. (dlen,12*12,nnodes)
+        return outdata
 
     def conv2D(self,indata):
         CVindex,CVx,CVy = self.pl_index(self.Csize[0],self.Csize[1],self.CVdia,self.CVstride)
@@ -486,18 +476,7 @@ class CNP(NN):
     
     
     def forward(self,indata):  #forward with maxpooling
-        #print(indata.shape)
         outdata = BUKfuc(indata,self.stepL,self.Tforward)        
-        return outdata
-    
-    def Tforward(self,indata):  #forward with maxpooling
-        HDdata,CVx,CVy = self.conv2D(indata)
-        #print(HDdata.shape)
-        HDfrRT = super().forward(HDdata)
-        #print(HDdata.shape,HDfrRT.shape)
-        tile_frRT,tile_index = self.MPtiles(HDfrRT,CVx,CVy)  #maxpooling index
-        outdata = np.max(tile_frRT,axis=-2)  #max fire rate of every node in every tile
-        #e.g. (dlen,12*12,nnodes)
         return outdata
     
     def us_train(self,indata,label,nlb):  #unsupervised training
