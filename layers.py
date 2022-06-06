@@ -38,9 +38,9 @@ class Layer(object):
         outdata = self.forward(indata)
         return outdata
     
-    def ap_cacu(self,indata,label):
-        outdata = self.forward(indata)
-        return outdata
+#    def apmxTrain(self,indata,label):
+#        outdata = self.forward(indata)
+#        return outdata
     
     def mpap_train(self,indata,label):
         outdata = self.forward(indata)
@@ -182,31 +182,28 @@ class pooling(CaP):
 #neural layers
         
 class NN(Layer):
-    #normal neural gas layer, no pooling, no apmx. RN yes.
+    #normal neural gas layer, no pooling, no apmx. yes RN.
     #typical first neural layer 
-    def __init__(self,nnodes,RN,alpha,gamma,capa,stepL,relu,inMD,refd):
+    def __init__(self,nnodes,RN,alpha,gamma,stepL,inMD,refd,regu):
         self.nnodes = nnodes     #number of nodes in matrix
         self.RN = RN             #random noise level
         self.alpha = alpha       #bsmx learning rate
         #self.beta = beta
         self.gamma = gamma       #RN's decreasing rate 
-        self.capa = capa         #monopoly pruning threshold
         self.stepL = stepL       #training step length
-        self.relu = relu         #firing treshold
         self.inMD = inMD         #init-matrix mode, 'sample' or 'TR'
-        self.refd = refd         #refund parameter, for monopoly martix adjusting
+        self.refd = refd         #relu martix fall down para
+        self.regu = regu         #relu matrix grow up
     
     
-    def init_train(self,HDdata):
-        #train basal matrix (bsmx) without supervise
-        
+    def init_train(self,HDdata):   #train basal matrix (bsmx) without supervise
         HDdata = self.normalize(HDdata,'UV')   #prepare 1D training data
-        self.bsmx = self.mxinit(HDdata,self.nnodes,self.inMD)  #creat basal matrix
-        self.monopoly = np.ones(self.nnodes)  #creat monopoly matrix
-
-        self.BUKtrain(HDdata)      #train matrix
         
-        frrt = self.firing(self.bsmx,HDdata,self.monopoly)   #see output
+        self.bsmx = self.mxinit(HDdata,self.nnodes,self.inMD)  #creat basal matrix
+        self.relumx = np.zeros(self.nnodes)  #creat relu matrix, all 0s
+        self.BUKtrain(HDdata,self.stepL)      #train matrix
+        
+        frrt = self.firing(self.bsmx,HDdata,self.relumx)   #see output
         outdata = self.rt2oh(frrt)    #one-hot output
         #outdata = frrt
         return outdata
@@ -260,66 +257,67 @@ class NN(Layer):
     
     def bs_train(self,HDdata): #train bsmx without supervise    
         HDdata = self.normalize(HDdata,'UV')
-        data = HDdata+0   #because data will shuffle in BUKtrain!!
 
-        self.BUKtrain(data)  #train matrix
+        self.BUKtrain(HDdata,self.stepL)  #train matrix
         
-        frrt = self.firing(self.bsmx,HDdata,self.monopoly)
+        frrt = self.firing(self.bsmx,HDdata,self.relumx)
         outdata = self.rt2oh(frrt)
         #output
         return outdata
     
     
-    def BUKtrain(self,bsdata):  #unsupervised training module
+    def BUKtrain(self,HDdata,stepL):  #unsupervised training module
         #split data in stepLs
+        bsdata = HDdata+0
         np.random.shuffle(bsdata) #!!! So, do NOT output frrt from BUKtrain !!!
 
         ct = 0  #sample counting
-        nos = len(bsdata)//self.stepL  #number of steps
+        nos = len(bsdata)//stepL  #number of steps
         trRN = self.RN+0  #random noise for training use
 
         for i in range(nos):
-            segdata = bsdata[ct:ct+self.stepL] #cut segdata
-            ct = ct + self.stepL
+            segdata = bsdata[ct:ct+stepL] #cut segdata
+            ct = ct + stepL
             
-            frrt,bmu = self.SEGtrain(segdata,trRN) #train bsmx  
+            self.SEGtrain(segdata,trRN) #train bsmx  
             trRN = trRN*(1-self.gamma)  #RN decrease every step, Simulated Annealing
 
-        return self.bsmx
+        return self.bsmx #not return frrt, because shuffled frrt is meaningless
     
     def SEGtrain(self,segdata,trRN):  #training in one segament
 
-        frrt = self.firing(self.bsmx,segdata,self.monopoly)
+        frrt = self.firing(self.bsmx,segdata,self.relumx)
         bmu = self.find_bmu(frrt)
         
         for i in range(len(segdata)):
             self.bsmx[bmu[i]] += frrt[i][bmu[i]]*segdata[i]*(self.alpha/len(segdata))
+            #core of training. If frrt[a,b]==0, bsmx no change
             
         self.bsmx += trRN*self.inRN(self.bsmx)/len(segdata)   #use random trRN
         
         self.bsmx = self.normalize(self.bsmx)  #normalize after learning and RNing
         
         freq = self.bmu_freq(bmu,self.nnodes)  #freq: firing frequency of each step
-        self.monopoly = self.MPtrain(freq,self.capa,self.stepL)
-        print(freq,self.monopoly)
+        capa = self.stepL/self.nnodes #goal for freq: avg firing freq
+        self.relumx = self.reluTrain(self.relumx,freq,capa,self.refd,self.regu,self.stepL)
+        print(freq,self.relumx)
         plt.matshow(np.reshape(self.bsmx[7],(28,28)))
-        return frrt,bmu
+        return bmu  #return bmu for children supervised learning
     
-    def MPtrain(self,freq,capa,datalen):  #UNsupervised MP training
-        indexIN = np.where(freq<1,1,0) #low fr_freq node, increase
-        self.monopoly += indexIN*(self.refd/datalen)
+    def reluTrain(self,relumx,freq,capa,refd,regu,datalen):  #UNsupervised relu training
+        indexDE = np.where(freq<capa,1,0) #low fr_freq node, decrease
+        relumx += indexDE*(freq-capa)*(refd/datalen) 
+        relumx = np.where(relumx<0,0,relumx)#if <0,then =0
         
-        indexDE = np.where(freq>capa,1,0)   #high fr_freq node, decrease 
-        self.monopoly += -3*indexDE*(self.refd/datalen)
+        indexIN = 1-indexDE   #high fr_freq node, increase 
+        relumx = 1-1/((1/(1-relumx))+indexIN*regu/datalen)
+        #relu need NO normalize
+        return relumx
         
-        self.monopoly = self.normalize(self.monopoly,norm_mode='OneMean')
-        #OneMean mode for MP, keep mean=1
-        return self.monopoly
-        
-    def firing(self,mx,data,monopoly):   #frrt: fire rate, works on high dimention
+    def firing(self,mx,data,relumx):   #frrt: fire rate with relu
+        #relu is a matrix, shape(relu) = nnodes
         frrt = np.dot(data,mx.T)
-        frrt = frrt*monopoly   #use MP
-        frrt[frrt<self.relu] = 0   #relu: set unfire rate to 0 
+        frrt[frrt<relumx] = 0   #relu: frrt less than relu, be 0
         #do NOT normalize result!!    
         return frrt
         
@@ -332,7 +330,7 @@ class NN(Layer):
         RNmx = np.random.rand(ms[0],ms[1])
         return RNmx
         
-    def bmu_freq(self,bmu,nnodes): #return frequency of bmu in len(bsmx)=nnodes
+    def bmu_freq(self,bmu,nnodes): #return frequency of mx's BMUs(use some tricks) 
         s_bmu = np.concatenate((bmu,np.arange(nnodes)))
         uni,s_freq = np.unique(s_bmu,return_counts=True)
         freq = s_freq-1
@@ -343,15 +341,15 @@ class NN(Layer):
         #self.HDdata = self.normalize(HDdata,'MinMax')
         self.HDdata = self.normalize(HDdata,'UV')
 
-        bsrt = self.firing(self.bsmx,self.HDdata,self.monopoly)
+        bsrt = self.firing(self.bsmx,self.HDdata,self.relumx)
         self.outbmu = self.find_bmu(bsrt)   #output bmu for MP supervised learning
-        outdata = self.rt2oh(bsrt)
+        outdata = self.rt2oh(bsrt) #one hot
         #bmu = self.find_bmu(bsrt)
         print('outdata size = ',np.shape(outdata))
         return outdata
     
     def rt2oh(self,mx):
-        #one hot bmu*rate array(convert non-max rate unit to 0). Recaculate bmu.
+        #one hot bmu*rate array(convert non-max rate unit to 0). 
         #works for hi-dim
         mxT = mx.T
         #mxT[mxT == mxT.max(0)] = 1
@@ -360,15 +358,15 @@ class NN(Layer):
         return mxT.T
     
 class NN_MP(NN):
-    def __init__(self,nnodes,RN,alpha,gamma,CFtrs,capa,seg,stepL,MPsize,MPdia,MPstride,relu,inMD):
-        NN.__init__(self,nnodes,RN,alpha,gamma,capa,seg,stepL,relu,inMD)
+    def __init__(self,nnodes,RN,alpha,gamma,CFtrs,seg,stepL,MPsize,MPdia,MPstride,relu,inMD):
+        super().__init__(self,nnodes,RN,alpha,gamma,seg,stepL,relu,inMD)
         self.CFtrs = CFtrs
         #CFtres: tiles select filter tres
         self.MPsize = MPsize
         self.MPdia = MPdia
         #self.label = label
         self.MPstride = MPstride
-        #self.relu = relu
+        #self.relumx = relu
         #print(MPstride)
         
     def init_train(self,HDdata):
@@ -377,7 +375,7 @@ class NN_MP(NN):
         
         #creat apmx here, and trained in FORWARD
         bsdata = self.data_prep(HDdata)
-        ohrt = NN.init_train(self,bsdata)
+        ohrt = super().init_train(self,bsdata)
         outdata = self.Mpooling(ohrt)
 
         return outdata
@@ -420,97 +418,110 @@ class NN_MP(NN):
         return out_data
     
     def bs_train(self,HDdata):
-        ohrt = NN.bs_train(self,HDdata)
+        ohrt = super().bs_train(self,HDdata)
         outdata = self.Mpooling(ohrt)
         return outdata
     
     def forward(self,HDdata):
-        ohrt = NN.forward(self,HDdata)
+        ohrt = super().forward(self,HDdata)
         outdata = self.Mpooling(ohrt)
         return outdata
 
 class GG(NN):
-    #Single Column layer for learning and prediction
-    def __init__(self,nnodes,RN,nlb,alpha,beta,gamma,seg,stepL,relu,inMD,redf):
-        super().__init__(nnodes,RN,alpha,gamma,seg,stepL,relu,inMD,redf)
+    #Single Column layer for label learning and prediction
+    def __init__(self,nnodes,RN,nlb,alpha,beta,gamma,delta,seg,stepL,inMD,redf,regu):
+        super().__init__(nnodes,RN,alpha,gamma,delta,seg,stepL,inMD,redf,regu)
         self.nlb = nlb      #nlb: number of diff labels
         self.beta = beta    #beta: apmx learning rate
+        self.delta = delta  #delta: supervied/unsupervised ratio
 
     
     def init_train(self,HDdata):  #init bsmx, MP & apmx
         outdata = super().init_train(HDdata)
         self.apmx = np.zeros((self.nnodes,self.nlb))
+        return outdata #output frrt for next layer
+    
+    def bs_train(self,HDdata):  #unsupervised training(do we really need this?)
+        outdata = super().bs_train(self,HDdata)        #print(len(np.unique(bmu)))
         return outdata
-    
-    def bs_train(self,HDdata):  #unsupervised training
-        outdata = NN.bs_train(self,HDdata)        #print(len(np.unique(bmu)))
-        return outdata
-    
-    def ap_cacu(self,HDdata,label):    #caculate apmx
-        #only need label, do not need verify
-        outdata = super().forward(HDdata)
-        bmu = NN.find_bmu(self,outdata)
-
-        for i in range(len(label)):
-            self.apmx[bmu[i],int(label[i])] += outdata[i,bmu[i]]*self.beta
-        self.apmx = self.normalize(self.apmx)
-        self.pr_label = self.prophet(bmu)
-
-        return outdata
-    
-    def prophet(self,bmu):
-        #choose the strongest prophet
-        aplb = np.argmax(self.apmx,axis=-1)
-        pr_label = aplb[bmu]
-        #aprt = np.max(self.apmx,axis=-1)
-        #ap_frrt = aprt[bmu]
-        return pr_label #ap_frrt
-    
     
     def forward(self,HDdata):    #forward without training
-        #HDdata: high dimentional data for forward dataflowß
-        #self.HDdata = self.normalize(HDdata,'MinMax')
         outdata = super().forward(HDdata)
-        self.bmu = np.argmax(outdata,axis=-1)
-        self.pr_label = self.prophet(self.bmu)
-        #save prd_label and max_frrt for voting
-        #ohrt as max pooling input
+        self.pr_label = self.prophet(self.outbmu)
+        #save pr_label for supervied learning
         return outdata
     
-    def mpap_train(self,HDdata,label):  #BUK train MP and bsmx, supervised 
+    def prophet(self,bmu):  #predict label
+        aplb = np.argmax(self.apmx,axis=-1)  #only care the max of apmx
+        pr_label = aplb[bmu]
+        return pr_label 
+    
+    def sv_train(self,HDdata,label): #supervised training
+        HDdata = self.normalize(HDdata,'UV')
+
+        self.BUKsv_train(HDdata,label,self.stepL)  #train matrix
+        
+        frrt = self.firing(self.bsmx,HDdata,self.relumx)
+        outdata = self.rt2oh(frrt)  #output frrt
+        
+        bmu = self.find_bmu(frrt)
+        self.pr_label = self.prophet(bmu)  #output predict label
+        return outdata
+    
+    def BUKsv_train(self,HDdata,label,stepL):  #supervised train relu and bsmx 
         ct = 0  #sample counting
-        nos = len(HDdata)//self.stepL  #number of steps
+        nos = len(HDdata)//stepL  #number of steps
         
         for i in range(nos):
-            segdata = HDdata[ct:ct+self.stepL]
-            seglabel = label[ct:ct+self.stepL]#cut segdata
-            ct = ct + self.stepL
+            segdata = HDdata[ct:ct+stepL]
+            seglabel = label[ct:ct+stepL] #cut segdata
+            ct = ct + stepL
 
-            self.SEGmpap_train(segdata,seglabel) #train bsmx
+            self.SEGsv_train(segdata,seglabel) #train bsmx
             
-            outdata = self.ap_cacu(HDdata,label)  #re-caculate apmx when bsmx changes
-        return outdata
+            self.apmx = self.apmxTrain(self.apmx,HDdata,label) #with all HDdata, not segdata!! 
+            #, re-caculate apmx when bsmx changes
+        return self.bsmx # NO return frrt because NN.SEGtrain shuffles!!
     
-    def SEGmpap_train(self,bsdata,label): #train MP and bsmx, supervised 
-        outdata = self.forward(bsdata)  #get pr_label
+    def SEGsv_train(self,segdata,label): #train MP and bsmx, supervised 
+        outdata = self.forward(segdata)  #get pr_label too
         
         Elist = np.equal(self.pr_label,label)+0
         Eindex = np.where(Elist==1)  #index of predict label = label
-        UEindex = np.where(Elist==0)
+        #UEindex = np.where(Elist==0)
         print('Elist = ',np.shape(Eindex))
-        Edata = bsdata[Eindex]   #input data for predict_label = label
+        Edata = segdata[Eindex]   #input data for predict_label = label
         
-        self.bsmx = NN.SEGtrain(self,Edata,self.RN)  #train bsmx only with those right data
-        
-        #UE_bmu = self.bmu[UEindex]
-        #self.monopoly = self.SMPtrain(UE_bmu,len(label))   #train MP
+        bmu = super().SEGtrain(self,Edata,self.RN)  #train bsmx only with those right data
+        self.relumx = self.SreluTrain(self.relumx,bmu,Elist,self.delta)   #train relumx
         return outdata
+    
+    def apmxTrain(self,apmx,HDdata,label):    #caculate apmx of a layer
+        #frrt->bmu->apmx
+        outdata = super().forward(HDdata)
+        bmu = super().find_bmu(self,outdata)
+
+        for i in range(len(label)):
+            apmx[bmu[i],int(label[i])] += outdata[i,bmu[i]]*self.beta
+        #train apmx
+        apmx = self.normalize(apmx)
+        #self.pr_label = self.prophet(bmu)
+        return apmx
         
-    def SMPtrain(self,bmu,datalen):
-        freq = self.bmu_freq(bmu,self.nnodes)
-        self.monopoly += -freq*(self.refd/datalen)
-        self.monopoly = self.normalize(self.monopoly,norm_mode='OneMean')
-        return self.monopoly
+    def SreluTrain(self,relumx,bmu,Elist,frrt,delta):  #supervied train relumx
+        UE_index = np.where(Elist==0) #unequal index
+        UE_bmu = bmu[UE_index] #unequal bmu
+        UE_freq = self.bmu_freq(UE_bmu,self.nnodes) #freq of unequal bmu
+        
+        avg_capa = sum(Elist)/self.nnodes #avg mistake freq of every node
+        
+        Srefd = delta*self.refd  #training rate for SL and UL can be different
+        Sregu = delta*self.regu
+        
+        relumx = self.reluTrain(relumx,UE_freq,avg_capa,Srefd,Sregu,self.stepL)
+            #make every UE_freq to avg_capa, then cannot blame any node
+            #UE_freq > avg_capa means too much relu distance, vice versa
+        return relumx
 
         
         
