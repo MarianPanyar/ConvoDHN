@@ -21,10 +21,12 @@ train_data = np.loadtxt(data_path + "mnist_train.csv",
                         delimiter=",")
 test_data = np.loadtxt(data_path + "mnist_test.csv", 
                        delimiter=",") 
-test_data[:10]
+#test_data[:10]
 
 label = train_data[:,0]
 raw_tdata = train_data[:,1:]
+ts_data = test_data[:,1:]
+ts_label = test_data[:,0] 
 
 #%%
 
@@ -36,25 +38,28 @@ importlib.reload(models)
 
 #%%
 datalen = 12000
-RN = 1
-alpha = 5
+RN = 0.000005
+#CFtres = 0.001
+alpha = 0.1
 beta = 0.2
-gamma = 0.01
-nnodes = 100
-CFtrs = 0.1
-capa = 9
-stepL = 316
+#CF = 0
+SPlim = 20000
+delta = 0.2
+nnodes = 30
+#capa = 4
+stepL = 500
 #MPsize = [28,28]
 MPdia = 4
 MPstride = 2
-relu = 0
 
 inMD = 'TR'
 lp = 3
-refd = 30
+reSL = 1.3
 
-bsdata = raw_tdata[:datalen]
-t_label = label[:datalen]
+TP = 0.3
+
+T_data = raw_tdata[:datalen]
+T_label = label[:datalen]
 
 
 #bsdata = raw_tdata[:datalen]
@@ -63,26 +68,26 @@ t_label = label[:datalen]
 
 
 #%%
+
+#NN(nnodes(required),RN,alpha,beta,stepL,inMD,reSL,TP)
+#NN_MP(nnodes,MPsize,MPdia,MPstride(required),RN,alpha,beta,stepL,inMD,reSL,TP,SPlim)
+
 flow_size = [datalen,[28,28]]
 
-A = model(nlb,alpha,beta,gamma,flow_size,t_label,0.01)
-#A.add('Norm','UV')
-#A.add('Relu',0.2)
+A = model(flow_size,alpha,beta,delta,RN,stepL,inMD,reSL,TP,SPlim)
+
 #A.add('Bipolar',2,0.5,n_mode='abs')
-#A.add('Bipolar',2,0.5,n_mode='abs')
-#A.add('Bipolar',2,0.5,n_mode='abs')
-#A.add('Bipolar',1,0.5,n_mode='abs')
-#A.add('Bipolar',1,0.5,n_mode='abs')
-#A.add('Padding',2,'constant')
+
+A.add('Padding',1,'constant')
 #A.add('Bipolar',2,0.5,'abs')
-#A.add('Bipolar',2,0.5,'abs')
-#A.add('Bipolar',1,0.5,'abs')
-#A.add('Conv2D',5,1,1)
+
+A.add('Conv2D',7,2,1)
 #A.add('Conv2D',3,1,2)
-#A.add('Flat',1,2)
-#A.add('GG_MP',nnodes,RN,CFtrs,ANtrs,seg,stepL,MPdia,MPstride,relu,inMD)
-#A.add('Flat',1,2)
-A.add('GG',nnodes,RN,capa,stepL,relu,inMD,refd)
+A.add('NN_MP',30,5,2,beta=1)
+A.add('Flat',1,2)
+#A.add('oneHot')
+A.add('NN',50,beta=0.5,stepL=300,inMD='sample')
+#A.add('GG',nnodes,RN,stepL,inMD,reSL)
 
 
 
@@ -90,22 +95,28 @@ A.add('GG',nnodes,RN,capa,stepL,relu,inMD,refd)
 
 #%%
 
-outdata = A.init_train(bsdata)
+outdata = A.init_train(T_data)
+#outdata = A.sv_train(bsdata,t_label)
 
 #frrt = np.dot(raw_tdata[20000:40000],A.frame[0].bsmx.T)
 #bmu = np.argmax(frrt,axis=-1)
 #np.unique(bmu,return_counts=True)
-
+#%%
+#outdata = A.us_train(bsdata)
+outdata = A.us_train(T_data)
 
 
 #%%
+#LLsv_train(indata,label,nlb(required),stepL,delta)
 bsdata = raw_tdata[datalen:datalen*2]
-outdata = A.bs_train(bsdata)
+t_label = label[datalen:datalen*2]
+outdata = A.LLsv_train(bsdata,t_label,nlb,200,delta)
 
 #%%
+A.LLtestTrain(raw_tdata[30000:40000],label[30000:40000],ts_data,ts_label,nlb)
 #t_label = label[datalen:datalen*2]
 
-p_label,Elist = A.ap_cacu(bsdata,t_label)
+#p_label,Elist = A.ap_cacu(bsdata,t_label)
 
 #%%
 bsdata = raw_tdata[datalen:datalen*2]
