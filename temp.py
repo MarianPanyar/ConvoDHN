@@ -25,11 +25,44 @@ test_data = np.loadtxt(data_path + "mnist_test.csv",
                        delimiter=",") 
 #test_data[:10]
 
-label = train_data[:,0]
-raw_tdata = train_data[:,1:]
+Rlabel = train_data[:,0]
+Rdata = train_data[:,1:]
 ts_data = test_data[:,1:]
 ts_label = test_data[:,0]
 
+
+
+#%%
+Adatalen = 50000
+
+tRdata = Rdata[:Adatalen]
+tRlabel = Rlabel[:Adatalen]
+
+#data augmentation
+from scipy.ndimage.interpolation import shift
+
+def shift_image(image, dx, dy):
+    image = image.reshape((28, 28))
+    shifted_image = shift(image, [dy, dx], cval=0, mode="constant")
+    return shifted_image.reshape([-1])
+
+AtRdata = [image for image in tRdata]
+AtRlabel = [image for image in tRlabel]
+
+for dx, dy in ((1,0), (-1,0), (0,1), (0,-1)):
+     for image, label in zip(tRdata, tRlabel):
+             AtRdata.append(shift_image(image, dx, dy))
+             AtRlabel.append(label)
+
+#AtRdata = np.array(AtRdata)
+#AtRlabel = np.array(AtRlabel)
+
+
+shuffle_idx = np.random.permutation(len(AtRdata))
+AtRdata = np.array(AtRdata)[shuffle_idx]
+AtRlabel = np.array(AtRlabel)[shuffle_idx]
+
+print(AtRdata.shape)
 
 #%%
 
@@ -40,68 +73,38 @@ importlib.reload(models)
 #importlib.reload(verf)
 
 #%%
-datalen = 10000
-RN = 0.000005
-#CFtres = 0.001
-alpha = 0.7
-beta = 5
-#CF = 0
-SPlim = 20000
-gamma = 1.5
-delta = 0.3
-ep = 0
-nnodes = 30
-#capa = 4
-stepL = 500
-#MPsize = [28,28]
-#MPdia = 4
-#MPstride = 2
 
-inMD = 'sample'
-reSL = 4
-
-TP = 0.05
-
-
-T_label = label[:datalen]
-
-
-
-
-#%%
-
+datalen = 50000
 
 flow_size = [datalen,[28,28]]
 
-A = model(flow_size,alpha,beta,gamma,delta,ep,RN,stepL,inMD,reSL,TP,SPlim)
+A = model(flow_size)
 
 #A.add('padding',1,'constant')
 
+
+
+#A.add('onoff','0.01')
 A.add('norm','UV')
-A.add('conv2D',5,1,1)
-#A.add('Conv2D',3,1,2)
-#A.add('salience',0.01)
-A.add('NNmp',32,2,2,alpha=1,beta=5,gamma=1.5,delta=0.05,stepL=500,inMD='sample',TP=0.4,SPlim=100000)
+
+A.add('CNP',20,4,1,1,2,2,'no',alpha=1,beta=4,gamma=1.4,delta=0.3,ep=0.1,stepL=1000,reSL=0.8,TP=(0.2,2),SPlim=6)
 #A.add('deleuze',0)
 A.add('salience',2)
-A.add('oneHot',0.2,'drop')
-#A.add('oneHot',0.1,'relu')
+#A.add('oneHot',0.1,'drop')
+#A.add('oneHot',0.8,'relu')
 A.add('oneHot',7,'delete')
-#A.add('oneHot',0.2,'thres')
+#A.add('oneHot',0.8,'thres')
 #A.add('EP',0.95)
-A.add('conv2D',4,1,2)
-A.add('flat',1,2)
-#A.add('oneHot',0)
-#A.add('Conv2D',3,1,2)
+
 #A.add('Flat',1,2)
-A.add('NNmp',64,3,2,alpha=1,beta=5,gamma=1.5,delta=0.1,stepL=500,inMD='sample',TP=0.1,SPlim=50000)
-A.add('salience',2)
+A.add('CNP',40,4,1,2,3,2,'no',alpha=1,beta=4,gamma=1.6,delta=0.3,ep=0,stepL=1000,reSL=0.7,TP=(0.1,900),SPlim=3)
+#A.add('salience',2)
 #A.add('oneHot',0.1,'relu')
-A.add('oneHot',0.2,'drop')
-A.add('oneHot',12,'delete')
+#A.add('oneHot',0.1,'drop')
+A.add('oneHot',15,'delete')
 #A.add('oneHot',0.2,'thres')
 A.add('flat',1,2)
-A.add('NN',1200,alpha=0.5,beta=5,gamma=1.5,delta=0.35,ep=1,stepL=1000,inMD='sample')
+A.add('NN',1200,'no',alpha=1,beta=4,gamma=1.8,delta=1.9,ep=0,stepL=5000,inMD=0,reSL=0.5)
 
 
 #%%
@@ -111,11 +114,12 @@ import timeit
 
 start = timeit.default_timer()
 
-datalen = 40000
+
 #Tlist = [1,1,1,1,1,1,1,1,0]
-Tdata = raw_tdata[:datalen]
-Tlabel = label[:datalen]
-A.So_train(Tdata,Tlabel,ts_data,ts_label,10,2,0.2)
+Tdata = AtRdata[:datalen]
+Tlabel = AtRlabel[:datalen]
+#A.SoL_train(Tdata,Tlabel,ts_data,ts_label,10,10,1)
+A.So_train(Tdata,Tlabel,ts_data,ts_label,10,2,1,2)
 
 stop = timeit.default_timer()
 
@@ -132,6 +136,11 @@ print('Time: ', stop - start)
 #A.So_test(outdata,ts_label,B2L)
 
 #%%
+outdata = A.forward(Tdata)
+            #self.So_test(outdata,tlabel,B2L)
+A.Mtest(outdata,A.frame[-1].bsmx,10,Tlabel,2)
+
+#%%
 B2L = A.find_B2L(A.frame[-1].bsmx,10)
 outdata = A.forward(Tdata)
 p_label = A.So_test(outdata,Tlabel,B2L)
@@ -145,7 +154,7 @@ p_label = A.So_test(outdata,Tlabel,B2L)
 
 flow_size = [datalen,[28,28]]
 
-A = model(flow_size,alpha,beta,gamma,delta,ep,RN,stepL,inMD,reSL,TP,SPlim)
+A = model(flow_size)
 
 #A.add('bipolar',2,0.5,'abs')
 #A.add('bipolar',2,0.5,'abs')
@@ -217,6 +226,34 @@ flow_size = [datalen,[28,28]]
 A = model(flow_size,alpha,beta,gamma,delta,ep,RN,stepL,inMD,reSL,TP,SPlim)
 #A.add('Norm','UVp')
 A.add('NN',400,alpha=0.2,beta=4,gamma=3,stepL=2000,inMD='sample')
+
+#%%
+datalen = 10000
+RN = 0.000005
+#CFtres = 0.001
+alpha = 0.7
+beta = 5
+#CF = 0
+SPlim = 20000
+gamma = 1.5
+delta = 0.3
+ep = 0
+nnodes = 30
+#capa = 4
+stepL = 500
+#MPsize = [28,28]
+#MPdia = 4
+#MPstride = 2
+
+inMD = 'sample'
+reSL = 4
+
+TP = 0.05
+
+
+#T_label = label[:datalen]
+
+
 
 #%%
 T_data = raw_tdata[:datalen]
@@ -579,3 +616,41 @@ def drop(mx,NE):
     newmx[index] = 0
     newmx = newmx.reshape(mx.shape)
     return newmx
+
+#%%
+from scipy.ndimage.interpolation import shift
+
+def shift_image(image, dx, dy):
+    image = image.reshape((28, 28))
+    shifted_image = shift(image, [dy, dx], cval=0, mode="constant")
+    return shifted_image.reshape([-1])
+
+#%%
+   def pl_index(vsize,hsize,dia,stride):
+        #convo index generator
+        #no padding. Do padding somewhere else
+        #dia: convo window diameter
+        #noc: number of cuts
+        #stride: >=1
+        v_noc = -(-(vsize-(dia-1))//stride)
+        h_noc = -(-(hsize-(dia-1))//stride)
+    
+        index=[]
+        for i in range(v_noc):
+            for j in range(h_noc):
+                dx = np.arange(dia**2)
+                dx = i*hsize*stride+j*stride+(dx%dia)+hsize*(dx//dia)
+                index.append(dx)
+        return np.array(index),v_noc,h_noc
+    
+#%%
+        def DD(mx,NE):
+            mxS = np.sort(mx,axis=-1)
+            thres = mxS[...,NE]
+            thresMX = np.repeat(thres[...,np.newaxis],mx.shape[-1],axis=-1)
+            newmx = mx+0
+            newmx[newmx<thresMX]=0
+            return newmx
+
+    
+    

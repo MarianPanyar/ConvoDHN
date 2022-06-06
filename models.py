@@ -9,8 +9,7 @@ LEARNING LOOP:
 Add layers
 init_train
 us_train
-LLsv_train
-LLtest_train
+
 ..........
 
 
@@ -20,50 +19,18 @@ import numpy as np
 import importlib
 
 import layers
-from layers import flat,oneHot,convolution,padding,NN,NN_MP,pl_index,salience,norm
+from layers import flat,oneHot,padding,NN,CNP,salience,norm
 
 #importlib.reload(GG_MP)
 importlib.reload(layers)
 
 class model(object):
-    def __init__(self,flow_size,alpha=0.1,beta=0.2,gamma=0.1,delta=0.2,ep=0.2,RN=0,stepL=300,inMD='TR',reSL=1.2,TP=0.3,SPlim=10000):
-        #defaut value. u can change them when add layers
-        self.alpha=alpha   #bsmx learning rate
-        self.beta=beta    #metmx learning rate
-        self.gamma=gamma   #N
-        self.delta=delta   #supervised/unsupervised ratio
-        self.ep=ep      #N
-        self.RN=RN  #random noise level
+    def __init__(self,flow_size):
         self.flow_size=flow_size   #outsize of previous layer, like: [300,[28,28],3],output like[300,[5,5],[4,4],3]
-        self.stepL = stepL  #step length
-        self.inMD = inMD  #init mode
-        self.reSL = reSL #metmx learning steps
-        self.TP = TP   #HDdata filter threshold
-        self.SPlim = SPlim   #samples limint
         self.frame=[]  #frame: a list of layers (class)
         
-    def add(self,what,P1=0,P2=0,P3=0,P4=0,P5=0,RN=None,alpha=None,beta=None,gamma=None,delta=None,ep=None,stepL=None,inMD=None,reSL=None,TP=None,SPlim=None):
+    def add(self,what,P1=0,P2=0,P3=0,P4=0,P5=0,P6=0,P7=0,P8=0,P9=0,RN=0.000001,alpha=1,beta=5,gamma=1.5,delta=0.3,ep=0,stepL=500,inMD='sample',reSL=1.3,TP=0,SPlim=100000):
         #add a layer to frame 
-        if RN is None:
-            RN = self.RN
-        if alpha is None:
-            alpha = self.alpha
-        if beta is None:
-            beta = self.beta
-        if gamma is None:
-            gamma = self.gamma
-        if delta is None:
-            delta = self.delta
-        if stepL is None:
-            stepL = self.stepL
-        if inMD is None:
-            inMD = self.inMD
-        if reSL is None:
-            reSL = self.reSL
-        if TP is None:
-            TP = self.TP
-        if SPlim is None:
-            SPlim = self.SPlim
         
         if what=='padding':
             layer = padding(self.flow_size[-1],P1,P2)
@@ -77,16 +44,11 @@ class model(object):
             layer = oneHot(P1,P2)  #P1=mode
             print('OneHot: keep top ',P1,' values, Mode ',P2)
             
-        elif what=='conv2D':  #convolution 2D
-            size_in = self.flow_size[-P3]  #input 2D size
-            #print(self.flow_size,P3)
-            layer = convolution(size_in,P1,P2,P3)
-            #P1 = diameter,P2=stride=1,P3=W2con(where to conv,1 = last layer)
-            out_index,v_noc,h_noc = pl_index(size_in[0],size_in[1],P1,P2)
-            self.flow_size[-P3]=[v_noc,h_noc]   #output 2D size
-            self.flow_size.insert(len(self.flow_size)-P3+1,[P1,P1])
-            print('Conv2D: ',self.flow_size,', Conv on the last',P3,'layer')
-
+        #elif what=='onoff':
+        #    layer = onoff(P1)  #P1=mode
+        #    self.flow_size[-1] = self.flow_size[-1]*2
+        #    print('OnOff:',self.flow_size)
+            
         elif what=='flat':
             layer = flat(P1,P2)  #reshape 2 or more dimensionss into one
             #P1=W2: which dimension to flat,(the lower one)
@@ -100,16 +62,23 @@ class model(object):
             print('Flatten: ',self.flow_size,', Flat',P2,'Dims from Dim',P1)
         
         elif what=='NN': #single-column layer
-            layer = NN(P1,RN,alpha,beta,gamma,delta,ep,stepL,inMD,reSL)   #P1=nnodes
+            layer = NN(P1,P2,RN,alpha,beta,gamma,delta,ep,stepL,inMD,reSL)   #P1=nnodes,P2=onoff mode
             self.flow_size[-1] = P1
             print('NN: ',self.flow_size, 'Matrix size = ',P1)
             
-        elif what=='NNmp':  #multi-column layer
-            MPsize = self.flow_size[-2]
-            layer = NN_MP(P1,MPsize,P2,P3,RN,alpha,beta,gamma,delta,ep,stepL,inMD,reSL,TP,SPlim)
-            #P1=nnodes,P2=MPdia,P3=MPstride
+        elif what=='CNP':  #convolution, neural and Maxpooling layer
+            Csize = self.flow_size[-P4]  #dimention to be CV
+            out_index,v_noc,h_noc = self.pl_index(Csize[0],Csize[1],P2,P3)
+            self.flow_size[-P4]=[v_noc,h_noc]   #CV output 2D shape
+            self.flow_size.insert(len(self.flow_size)-P4+1,[P2,P2])
+            print('Conv2D: ',self.flow_size,', Conv on the last',P4,'layer')
+            if P4 == 2:
+                self.flow_size.pop(-P4)
 
-            out_index,v_noc,h_noc = pl_index(MPsize[0],MPsize[1],P2,P3) #vertical & horizontal size
+            layer = CNP(P1,Csize,P2,P3,P4,P5,P6,P7,RN,alpha,beta,gamma,delta,ep,stepL,inMD,reSL,TP,SPlim)
+            #P1=nnodes,P2=CVdia,P3=CVstride,P4=CVw2,P5=MPdia,P6=MPstride,P7=onoffmode
+            MPsize = self.flow_size[-2]
+            out_index,v_noc,h_noc = self.pl_index(MPsize[0],MPsize[1],P5,P6) #vertical & horizontal size
             self.flow_size[-1] = P1             
             self.flow_size[-2]=[v_noc,h_noc]
             print('NN and MaxPooling: ',self.flow_size, 'Matrix size = ',P1)
@@ -158,9 +127,8 @@ class model(object):
         for i in self.frame:
             #start = timeit.default_timer()
             outdata = i.init_train(indata,label,nlb)
-            
             if type(i)==NN:
-                for j in range(i.ep):  #if ep>0
+                for j in range(i.inMD):  #if ep>0
                     outdata = i.us_train(indata,label,nlb)
                     print('us_train')
             indata = outdata
@@ -170,8 +138,7 @@ class model(object):
            #print('Time: ', stop - start) 
         return outdata
     
-
-    def So_train(self,indata,label,tdata,tlabel,nlb,nloops,Esp):  #Sol supervised training
+    def So_train(self,indata,label,tdata,tlabel,nlb,nloops,Esp,NE):  #Sol supervised training
         Adata = indata+0    
         Alabel = label+0
         
@@ -183,8 +150,8 @@ class model(object):
             #self.us_train(Adata,Alabel,nlb,Tlist)
             
             #Aoutdata = self.forward(Adata)
-            B2L = self.find_B2L(self.frame[-1].bsmx,nlb)
-            p_label,Elist = self.So_test(Aoutdata,Alabel,B2L)
+            #B2L = self.find_B2L(self.frame[-1].bsmx,nlb)
+            p_label,Elist = self.Mtest(Aoutdata,self.frame[-1].bsmx,10,Alabel,NE)
             print(sum(Elist))
             
             Sodata = Adata[np.where(Elist==0)]
@@ -197,8 +164,54 @@ class model(object):
             Alabel = np.concatenate((Alabel,Solabel),axis=0)
             print(len(Adata))
             
+            #B2L = self.find_B2L(self.frame[-1].bsmx,10)
+            outdata = self.TBUKforward(tdata,self.frame[-1].stepL)
+            #self.So_test(outdata,tlabel,B2L)
+            self.Mtest(outdata,self.frame[-1].bsmx,10,tlabel,NE)
+
+            #Adata,Alabel = self.S_shuffle(Adata,Alabel)
+            #shuffle in BUKtrain
+        return Elist
+
+    def SoL_train(self,indata,label,tdata,tlabel,nlb,nloops,Esp):  #Sol supervised training
+        
+        Sdatalen = len(indata)//3
+        Sdata = indata[:(Sdatalen*3)].reshape(3,Sdatalen,indata.shape[-1])
+        Slabel = label[:(Sdatalen*3)].reshape(3,Sdatalen)        
+        #i.init_train(Adata,Alabel,nlb)
+        Sodata = np.array([], dtype=np.int64).reshape(0,indata.shape[-1])
+        Solabel = np.array([], dtype=np.int64).reshape(0)
+        for j in range(nloops):
+            #self.frame[-1].delta=(delta2-delta1)*(j/(nloops-1))+delta1
+            dataA = Sdata[(j%3)]
+            labelA = Slabel[(j%3)]
+            #dataB = Sdata[((j+1)%3)]
+            #labelB = Slabel[((j+1)%3)]
+            dataC = Sdata[((j+2)%3)]
+            labelC = Slabel[((j+2)%3)]
+            
+            Adata = np.concatenate((dataA,Sodata),axis=0)
+            Alabel = np.concatenate((labelA,Solabel),axis=0)
+            print(len(Adata))
+            
+            self.si_train(Adata,Alabel,nlb)
+            #self.us_train(Adata,Alabel,nlb,Tlist)
+            
+            outdataC = self.forward(dataC)
+            B2L = self.find_B2L(self.frame[-1].bsmx,nlb)
+            p_label,Elist = self.So_test(outdataC,labelC,B2L)
+            print(sum(Elist))
+            
+            Sodata = dataC[np.where(Elist==0)]
+            Solabel = labelC[np.where(Elist==0)]
+            Sodata,Solabel = self.piano(Sodata,Solabel,Esp)
+            print(len(Sodata))
+            #Adata = Adata[np.where(Elist==1)]
+            #Alabel = Alabel[np.where(Elist==1)]
+
+            
             B2L = self.find_B2L(self.frame[-1].bsmx,10)
-            outdata = self.Tforward(tdata)
+            outdata = self.TBUKforward(tdata,self.frame[-1].stepL)
             self.So_test(outdata,tlabel,B2L)
             
             #Adata,Alabel = self.S_shuffle(Adata,Alabel)
@@ -226,6 +239,23 @@ class model(object):
         p_label = B2L[bmu]
         Elist = self.verf(p_label,label)
         return p_label,Elist
+    
+    def Mtest(self,frRT,bsmx,nlb,label,NE):
+        DfrRT = self.delFR(frRT,NE)
+        tailmx = bsmx[:,-nlb:]
+        PRmx = np.dot(DfrRT,tailmx)
+        p_label = np.argmax(PRmx,axis=-1)
+        Elist = self.verf(p_label,label)
+        return p_label,Elist
+        
+    def delFR(self,mx,NE):
+        mxS = np.sort(mx,axis=-1)
+        RE = mx.shape[-1]-NE
+        thres = mxS[...,RE]
+        thresMX = np.repeat(thres[...,np.newaxis],mx.shape[-1],axis=-1)
+        newmx = mx+0
+        newmx[newmx<thresMX]=0
+        return newmx        
         
             
     def S_shuffle(self,arrayA,arrayB):   #
@@ -242,10 +272,32 @@ class model(object):
             indata = outdata
         return outdata
     
-    def Tforward(self,indata): #forward for testing
-        for i in self.frame:
-            outdata = i.Tforward(indata)
-            indata = outdata
+    def TBUKforward(self,indata,stepL): #forward for testing
+        ct = 0
+        nos = len(indata)//stepL
+        rem = len(indata)%stepL
+        
+        if rem > 0:
+            firstL = rem
+        else:
+            firstL = stepL
+            nos = nos-1
+        firstindata = indata[:firstL]
+        
+        for j in self.frame:
+            firstoutdata = j.Tforward(firstindata)
+            firstindata = firstoutdata
+        outdata = firstoutdata
+                            
+        for i in range(nos):
+            segindata = indata[firstL+ct:firstL+ct+stepL] #cut segdata
+            ct = ct+stepL
+            
+            for j in self.frame:
+                segoutdata = j.Tforward(segindata)
+                segindata = segoutdata
+            outdata = np.concatenate((outdata,segoutdata),axis=0)
+                
         return outdata
 
     
@@ -261,12 +313,6 @@ class model(object):
         bmu = np.argmax(frrt,axis=-1)
         return bmu
 
-#    def LLprophet(self,outdata,apmx): #predict label for last layer(only one column)
-#        OHoutdata = self.rt2oh(outdata)  #one hot
-#        pLabel = np.argmax(pRT2D,axis=-1)   #predict label
-#        pRT = np.max(pRT2D,axis=-1)    #prediction rate(how strong the prediction is)
-#        pBMU = np.argmax(outdata,axis=-1)   #which node is using when making prediction
-#        return pLabel,pRT,pBMU
         
 
 
@@ -302,6 +348,24 @@ class model(object):
         return newdata
                 
             
+
+    
+    def pl_index(self,vsize,hsize,dia,stride):
+        #convo index generator
+        #no padding. Do padding somewhere else
+        #dia: convo window diameter
+        #noc: number of cuts
+        #stride: >=1
+        v_noc = -(-(vsize-(dia-1))//stride)
+        h_noc = -(-(hsize-(dia-1))//stride)
+    
+        index=[]
+        for i in range(v_noc):
+            for j in range(h_noc):
+                dx = np.arange(dia**2)
+                dx = i*hsize*stride+j*stride+(dx%dia)+hsize*(dx//dia)
+                index.append(dx)
+        return np.array(index),v_noc,h_noc
 
 
 
