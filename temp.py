@@ -12,6 +12,8 @@ import numpy as np
 #import matplotlib.pyplot as plt
 import importlib
 #import scipy
+#from scipy import ndimage
+
 
 image_size = 28 # width and length
 nlb = 10 #  i.e. 0, 1, 2, 3, ..., 9
@@ -37,14 +39,16 @@ importlib.reload(models)
 #importlib.reload(verf)
 
 #%%
-datalen = 12000
+datalen = 10000
 RN = 0.000005
 #CFtres = 0.001
 alpha = 0.1
 beta = 0.2
 #CF = 0
-SPlim = 20000
-delta = 0.2
+SPlim = 2000
+gamma = 4
+delta = 2
+ep = 0.2
 nnodes = 30
 #capa = 4
 stepL = 500
@@ -52,19 +56,15 @@ stepL = 500
 MPdia = 4
 MPstride = 2
 
-inMD = 'TR'
-lp = 3
-reSL = 1.3
+inMD = 'sample'
+reSL = 1.4
 
 TP = 0.3
 
-T_data = raw_tdata[:datalen]
+
 T_label = label[:datalen]
 
 
-#bsdata = raw_tdata[:datalen]
-
-#from layers import flat,relu,normalize,convolution,padding,GG_MP,bipolar,pl_index
 
 
 #%%
@@ -74,27 +74,41 @@ T_label = label[:datalen]
 
 flow_size = [datalen,[28,28]]
 
-A = model(flow_size,alpha,beta,delta,RN,stepL,inMD,reSL,TP,SPlim)
+A = model(flow_size,alpha,beta,gamma,delta,ep,RN,stepL,inMD,reSL,TP,SPlim)
 
-#A.add('Bipolar',2,0.5,n_mode='abs')
-
-A.add('Padding',1,'constant')
+A.add('Bipolar',2,0.5,'abs')
 #A.add('Bipolar',2,0.5,'abs')
+#A.add('Bipolar',2,0.5,'abs')
+A.add('Padding',1,'constant')
 
-A.add('Conv2D',7,2,1)
+
+A.add('Conv2D',3,1,1)
 #A.add('Conv2D',3,1,2)
-A.add('NN_MP',30,5,2,beta=1)
+A.add('NNmp',32,2,2,stepL=300,alpha=0.1,beta=0.1,ep=0.8,inMD='sample',SPlim=300)
+#A.add('Conv2D',3,1,2)
+#A.add('Flat',1,2)
+#A.add('oneHot',0)
+A.add('Conv2D',3,1,2)
 A.add('Flat',1,2)
-#A.add('oneHot')
-A.add('NN',50,beta=0.5,stepL=300,inMD='sample')
+A.add('NNmp',64,2,2,stepL=300,alpha=0.1,beta=0.1,ep=0.8,inMD='sample',SPlim=500)
+#A.add('oneHot',0)
+A.add('Flat',1,2)
+A.add('NN',128,alpha=0.1,beta=0.05,ep=0.7,stepL=300,inMD='sample')
 #A.add('GG',nnodes,RN,stepL,inMD,reSL)
 
+#%%
+#NN(nnodes(required),RN,alpha,beta,stepL,inMD,reSL,TP)
+#NN_MP(nnodes,MPsize,MPdia,MPstride(required),RN,alpha,beta,stepL,inMD,reSL,TP,SPlim)
+
+#flow_size = [datalen,[28,28]]
+#A = model(flow_size,alpha,beta,gamma,delta,ep,RN,stepL,inMD,reSL,TP,SPlim)
+#A.add('NN',200,alpha=0.1,beta=0.1,stepL=600,inMD='sample')
 
 
 
 
 #%%
-
+T_data = raw_tdata[:datalen]
 outdata = A.init_train(T_data)
 #outdata = A.sv_train(bsdata,t_label)
 
@@ -103,18 +117,41 @@ outdata = A.init_train(T_data)
 #np.unique(bmu,return_counts=True)
 #%%
 #outdata = A.us_train(bsdata)
-outdata = A.us_train(T_data)
+U_data = raw_tdata[20000:30000]
+Tlist = [1,1,1,1,1,1,1,1,1,3]
+outdata = A.us_train(U_data,Tlist)
 
 
 #%%
 #LLsv_train(indata,label,nlb(required),stepL,delta)
-bsdata = raw_tdata[datalen:datalen*2]
-t_label = label[datalen:datalen*2]
-outdata = A.LLsv_train(bsdata,t_label,nlb,200,delta)
+A.frame[-3].alpha = 0
+A.frame[-3].beta = 0
+A.frame[-3].gamma = 0
+A.frame[-3].delta = 2
+A.frame[-3].ep = 0.8
+A.frame[-3].TP = 0.05
+
+A.frame[-1].alpha = 0.2
+A.frame[-1].beta = 0.2
+A.frame[-1].gamma = 0
+A.frame[-1].delta = 10
+A.frame[-1].ep = 0.9
+#%%
+bsdata = raw_tdata[10000:30000]
+t_label = label[10000:30000]
+outdata = A.LLsv_train(bsdata,t_label,nlb,400)
+
+#%%
+import matplotlib.pyplot as plt 
+bs4 = A.frame[-3].bsmx
+for i in range(10):
+    plt.matshow(bs4[i].reshape(5,5))
+
+
 
 #%%
 A.LLtestTrain(raw_tdata[30000:40000],label[30000:40000],ts_data,ts_label,nlb)
-#t_label = label[datalen:datalen*2]
+#t_label = label[datalen:datalen*2]|
 
 #p_label,Elist = A.ap_cacu(bsdata,t_label)
 
@@ -135,17 +172,7 @@ for i in range(20):
 
 
 #%%
-r_data = bsdata[Elist!=1]
-r_label = t_label[Elist!=1]
 
-for i in range(lp):
-    bsdata = raw_tdata[datalen*(i+1):datalen*(i+2)]
-    t_label = label[datalen*(i+1):datalen*(i+2)]
-    bsdata_p = bsdata+r_data
-    label_p = t_label+r_label
-    Elist = A.forward(bsdata_p)
-    r_data = bsdata_p[Elist!=1]
-    r_label = label_p[Elist!=1]
     
 
 
@@ -155,24 +182,5 @@ for i in range(lp):
 
 
 #%%
-outdata = np.dot(bsdata,A.frame[0].bsmx.T)
-bmu = np.argmax(outdata,axis=-1)
-print(len(np.unique(bmu)))
-apmx = np.zeros((nnodes,nlb))
-for i in range(datalen):
-    apmx[bmu[i],int(t_label[i])] += outdata[i,bmu[i]]*0.2
-
-aplb = np.argmax(apmx,axis=-1)
-pr_label = aplb[bmu]
-Elist = np.equal(pr_label,t_label)+0
-print(sum(Elist))
-#%%
-
-Eindex = np.where(Elist==0)[1]
-Edata = bsdata[Eindex]
-Elabel = t_label[Eindex]
-bsdata = np.concatenate((Edata,bsdata))
-t_label = np.concatenate((Elabel,t_label))
-Elist = A.train(bsdata,t_label)
 
 
