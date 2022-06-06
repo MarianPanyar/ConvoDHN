@@ -28,7 +28,7 @@ from layers import flat,padding,NN,NN_MP,GG,GG_MP,bipolar,pl_index
 importlib.reload(layers)
 
 class model(object):
-    def __init__(self,nlb,alpha,beta,gamma,flow_size,label,glrf):
+    def __init__(self,nlb,alpha,beta,gamma,delta,flow_size,label,glrf):
         #nlb: number of labels, for classification
         #alpha: forward learning rate
         #beta: backward learning rate
@@ -38,6 +38,7 @@ class model(object):
         self.alpha=alpha
         self.beta=beta
         self.gamma = gamma
+        self.delta = delta
         self.flow_size=flow_size
         self.label=label
         self.glrf = glrf
@@ -72,16 +73,16 @@ class model(object):
             print('Flatten Layer: ',self.flow_size,', Flat',P2,'dims from Dim',P1)
         
         elif what=='NN':
-            layer = NN(P1,P2,self.alpha,self.gamma,P3,P4,P5,P6,P7)
-            #P1=nnodes,P2=RN,P3=capa,P4=stepL,P5=relu,P6=inMD,P7=refd
+            layer = NN(P1,P2,self.alpha,self.gamma,P3,P4,P5,P6)
+            #P1=nnodes,P2=RN,P3=stepL,P4=inMD,P5=refd,P6=regu
             self.flow_size[-1] = P1
             print('NN: ',self.flow_size, 'Matrix size = ',P1)
             
         elif what=='NN_MP':
             #main learning layer
             MPsize = self.flow_size[-2]
-            layer = NN_MP(P1,P2,self.alpha,self.gamma,P3,P4,P5,MPsize,P6,P7,P8,P9,P10)
-            #P1=nnodes,P2=RN,P3=CFtres,P4=capa,P5=stepL,P6=MPdia,P7=MPstride,P8=relu,P9=inMD,P10=refd
+            layer = NN_MP(P1,P2,self.alpha,self.gamma,P3,P4,P5,MPsize,P6,P7,P8,P9)
+            #P1=nnodes,P2=RN,P3=CFtres,P4=capa,P5=stepL,P6=MPdia,P7=MPstride,P8=inMD,P9=refd
 
             out_index,v_noc,h_noc = pl_index(MPsize[0],MPsize[1],P7,P8) #here
             self.flow_size[-1] = P1             
@@ -89,8 +90,8 @@ class model(object):
             print('NN and MaxPooling: ',self.flow_size, 'Matrix size = ',P1)
             
         elif what=='GG':
-            layer = GG(P1,P2,self.nlb,self.alpha,self.beta,self.gamma,P3,P4,P5,P6,P7)
-            #P1=nnodes,P2=RN,P3=capa,P4=stepL,P5=relu,P6=inMD,P7=redf
+            layer = GG(P1,P2,self.nlb,self.alpha,self.beta,self.gamma,self.delta,P3,P4,P5,P6)
+            #P1=nnodes,P2=RN,P3=stepL,P4=inMD,P5=redf,P6=regu
 
             self.flow_size[-1] = P1
             print('GG:',self.flow_size, 'Matrix size = ',P1)        

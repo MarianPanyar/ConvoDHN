@@ -37,12 +37,13 @@ importlib.reload(models)
 #%%
 datalen = 12000
 RN = 1
-alpha = 5
+alpha = 10
 beta = 0.2
 gamma = 0.01
+delta = 3
 nnodes = 100
 CFtrs = 0.1
-capa = 9
+capa = 3
 stepL = 316
 #MPsize = [28,28]
 MPdia = 4
@@ -51,7 +52,8 @@ relu = 0
 
 inMD = 'TR'
 lp = 3
-refd = 30
+refd = 3
+regu = 300
 
 bsdata = raw_tdata[:datalen]
 t_label = label[:datalen]
@@ -65,7 +67,7 @@ t_label = label[:datalen]
 #%%
 flow_size = [datalen,[28,28]]
 
-A = model(nlb,alpha,beta,gamma,flow_size,t_label,0.01)
+A = model(nlb,alpha,beta,gamma,delta,flow_size,t_label,0.01)
 #A.add('Norm','UV')
 #A.add('Relu',0.2)
 #A.add('Bipolar',2,0.5,n_mode='abs')
@@ -82,7 +84,8 @@ A = model(nlb,alpha,beta,gamma,flow_size,t_label,0.01)
 #A.add('Flat',1,2)
 #A.add('GG_MP',nnodes,RN,CFtrs,ANtrs,seg,stepL,MPdia,MPstride,relu,inMD)
 #A.add('Flat',1,2)
-A.add('GG',nnodes,RN,capa,stepL,relu,inMD,refd)
+A.add('NN',nnodes,RN,stepL,inMD,refd,regu)
+#A.add('GG',nnodes,RN,capa,stepL,inMD,refd)
 
 
 
