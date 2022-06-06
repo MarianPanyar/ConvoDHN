@@ -11,7 +11,7 @@ Created on Sat Jun 12 10:00:28 2021
 
 
 import numpy as np
-import scipy.ndimage
+#import scipy.ndimage
 #import matplotlib.pyplot as plt 
 
 
@@ -22,11 +22,15 @@ class Layer(object):    #P class
     def forward(self,indata):   #fire (and predict) without training
         raise NotImplementedError()
         
-    def init_train(self,indata):   #(if needed) build matrices and train layer by layer
+    def Tforward(self,indata):   #special forward for testing
+        outdata = self.forward(indata)   
+        return outdata
+        
+    def init_train(self,indata,label,nlb):   #(if needed) build matrices and train layer by layer
         outdata = self.forward(indata)   #for layers not trainable. Should be overwrite when needed.
         return outdata
     
-    def us_train(self,indata):    #unsupervised train, layer by layer
+    def us_train(self,indata,label,nlb):    #unsupervised train, layer by layer
         outdata = self.forward(indata)     #for layers not trainable. Should be overwrite when needed.
         return outdata
 
@@ -45,49 +49,58 @@ class flat(Layer):    #2D(or more) to 1D
         return outdata
 
 
-class bipolar(Layer):    #center-on or center-off neurons. sharpen the image 
-    def __init__(self,csize,radius,halo,mode='on'):
-        self.csize=csize     #csize: size of 2D data
-        self.radius=radius   #radius of peripheral depression
-        self.halo=halo   #peripheral haro weight
-        self.mode=mode  #on:on-center, off:off-center, abs:on+off center
-        
-    def forward(self,data):
-        sqdata = np.reshape(data,(len(data),self.csize[0],self.csize[1]))
-        g_data = scipy.ndimage.gaussian_filter1d(sqdata,sigma=self.radius,axis=1)
-        g_data = scipy.ndimage.gaussian_filter1d(g_data,sigma=self.radius,axis=2)
-        on_center = sqdata-self.halo*g_data
-        if self.mode=='on':
-            osqdata=on_center
-        elif self.mode=='off':
-            osqdata=-on_center
-        elif self.mode=='abs':
-            osqdata=abs(on_center)
-        outdata = np.reshape(osqdata,(len(data),self.csize[0]*self.csize[1]))
-        return outdata
-
 class oneHot(Layer):   #all elements to 0 except max NE elements, for last dimension
     #works for hi-dim
-    def __init__(self,NE=0):
+    def __init__(self,NE=0,Mode='delete'):
         self.NE = NE   #numbers of elite
+        self.Mode = Mode
         
     def forward(self,mx):
-        mxS = np.sort(mx,axis=-1)
-        thres = mxS[...,-self.NE]
-        thresMX = np.repeat(thres[...,np.newaxis],mx.shape[-1],axis=-1)
-        newmx = mx+0
-        newmx[newmx<thresMX]=0
+        if self.Mode == 'sig':
+            newmx = 1/(1+np.exp(self.NE/mx-1/(1-mx)))
+            
+        elif self.Mode == 'drop':
+            abLen = np.prod(mx.shape)
+            dropNum = int(abLen*self.NE)
+            index = np.random.choice(abLen,dropNum,replace=False)
+            newmx = mx.reshape(abLen)
+            newmx[index] = 0
+            newmx = newmx.reshape(mx.shape)
+            
+        elif self.Mode == 'delueze':
+            dim = len(mx.shape)
+            d2a = tuple(np.arange(dim-1))
+            avgdata = np.average(mx,axis=d2a)
+            newmx = mx-avgdata
+            
+        elif self.Mode == 'relu':
+            newmx = mx-self.NE
+            newmx[newmx<0] = 0
+            
+        elif self.Mode == 'thres':
+            newmx = mx+0
+            newmx[newmx<self.NE] = 0
+            
+        else:
+            mxS = np.sort(mx,axis=-1)
+            thres = mxS[...,-self.NE]
+            thresMX = np.repeat(thres[...,np.newaxis],mx.shape[-1],axis=-1)
+            newmx = mx+0
+            if self.Mode == 'delete':
+                newmx[newmx<thresMX]=0
+            elif self.Mode == 'minus':
+                newmx = newmx-thresMX
+                newmx[newmx<0]=0
+            else:
+                print('sorry, wrong Mode!')
         return newmx
     
-class EP(Layer):   #Elements less than ep to 0
-    def __init__(self,ep=0):
-        self.ep = ep
-        
-    def forward(self,mx):
-        newmx = mx+0
-        newmx[newmx<self.ep]=0
+    def Tforward(self,mx):
+        if self.Mode == 'drop':
+            newmx = mx
+        else:
+            newmx = self.forward(mx)
         return newmx
-
 
 class CaP(Layer):    #pooling & convolution 
     def __init__(self,csize,diameter,stride=1):
@@ -161,27 +174,14 @@ class norm(Layer): #normalization
             mean = np.tile(mean,data.shape[-1])
             newdata = data/mean    
         return newdata
-    
-class deleuze(Layer):   #data to difference
-    def __init__(self,mode):
-        self.mode = mode    #not ready yet
-        
-    def forward(self,data):
-        dim = len(data.shape)
-        d2a = tuple(np.arange(dim-1))
-        avgdata = np.average(data,axis=d2a)
-        newdata = data-avgdata
-        return newdata
+
 
 class salience(Layer):    # sum<TP, tiles to 0
-    def __init__(self,TP):
-        self.TP = TP
+    def __init__(self,PW):
+        self.PW = PW
     
     def forward(self,data):
-        avgsum = np.average(np.sum(data,axis=-1))
-        TPsum = avgsum*self.TP
-        newdata = data+0
-        newdata[np.sum(newdata,axis=-1)<TPsum]=0
+        newdata = data**self.PW
         return newdata
     
         
@@ -192,13 +192,13 @@ class NN(Layer):
         self.nnodes = nnodes     #number of nodes in matrix
         self.RN = RN             #random noise level
         self.alpha = alpha       #bsmx learning rate
-        self.beta = beta         #metmx learning rate
-        self.gamma = gamma   #metmx init value
-        self.delta = delta       #label/sample weight ratio
-        self.ep = ep             #EPfilter threshold
+        self.beta = beta         #hit freq factor, beginning, should >1
+        self.gamma = gamma       #hit freq factor, ending
+        self.delta = delta       #sample/label weight ratio, Lweight
+        self.ep = ep             #unsuperviesd learning times
         self.stepL = stepL       #training step length
         self.inMD = inMD         #init-matrix mode, 'sample' or 'TR'
-        self.reSL = reSL         #Metric matrix's learning step length para
+        self.reSL = reSL         #N/A
         #self.TP = TP         #firing threshold potential
     
     
@@ -206,23 +206,24 @@ class NN(Layer):
         duodata = self.zipper(bsdata,label,nlb,self.delta)  #zip bsdata and label, normalization included
         
         self.bsmx = self.mxinit(duodata,self.nnodes,self.inMD)  #creat basal matrix
-        self.metmx = np.ones(self.nnodes)*self.gamma  #creat metric matrix, all 0s
         
-        self.BUKtrain(duodata,self.stepL,self.beta)      #train matrix
+        self.BUKtrain(duodata,self.stepL)      #train matrix
         
-        outdata = self.Pfiring(self.bsmx,bsdata,self.metmx)   #output
+        outdata = self.Pfiring(self.bsmx,bsdata)   #output
+        #bmu = self.find_bmu(outdata)
+        #uni,s_freq = np.unique(bmu,return_counts=True)
+        #print(uni,s_freq)
         return outdata
     
     def zipper(self,bsdata,label,nlb,Lweight):    #zip bsdata and labels, norm included
         bsdata = self.normalize(bsdata,'UV')   #prepare 1D training data
         dlen = len(bsdata)
-        onehotLB = np.zeros((dlen,nlb))     #prepare onehot label matrix
         
+        apmx = np.zeros((dlen,nlb))     #prepare onehot label matrix     
         Tlabel = label.astype(int)
-        onehotLB[range(dlen),Tlabel] = Lweight
-        #NO NEED to norm cause each row has only one 1
+        apmx[range(dlen),Tlabel] = Lweight     
         
-        duodata = np.hstack([bsdata,onehotLB])
+        duodata = np.hstack([bsdata,apmx])    #zip
         duodata = self.normalize(duodata,'UV')
         return duodata
         
@@ -269,12 +270,15 @@ class NN(Layer):
     
     def us_train(self,bsdata,label,nlb): #unsupervised train bsmx  
         duodata = self.zipper(bsdata,label,nlb,self.delta) 
-        self.BUKtrain(duodata,self.stepL,self.beta)  #train bsmx and metmx
-        outdata = self.Pfiring(self.bsmx,bsdata,self.metmx)  #output
+        self.BUKtrain(duodata,self.stepL)  #train bsmx and metmx
+        outdata = self.Pfiring(self.bsmx,bsdata)  #output
+        #bmu = self.find_bmu(outdata)
+        #uni,s_freq = np.unique(bmu,return_counts=True)
+        #print(uni,s_freq)
         return outdata
     
 
-    def BUKtrain(self,bsdata,stepL,Sbeta):  #unsupervised training module
+    def BUKtrain(self,bsdata,stepL):  #unsupervised training module
         #split data in nos parts
         #beta(metmx learning rate) can change
         bsdataT = self.normalize(bsdata,'UV')  
@@ -282,65 +286,50 @@ class NN(Layer):
 
         ct = 0  #sample counting
         nos = len(bsdataT)//stepL  #number of steps
-
+        print(nos)
         for i in range(nos):
             trRN = self.RN*(1-i/nos)  #RN decrease every step, Simulated Annealing
-            beta = Sbeta*(1-i/nos)  #metmx learning rate, SA
             alpha = self.alpha*(1-i/nos)
             segdata = bsdataT[ct:ct+stepL] #cut segdata
+            reSL = (self.beta-self.gamma)*(i/(nos-1))+self.gamma
             
-            self.SEGtrain(segdata,trRN,alpha,beta) #train bsmx  
+            self.SEGtrain(segdata,trRN,alpha,reSL) #train bsmx  
             ct = ct + stepL
         return self.bsmx #not return frRT, because shuffled frRT is meaningless
 
     
-    def SEGtrain(self,segdata,trRN,alpha,beta):  #training in one segament
-        frRT = self.firing(self.bsmx,segdata,self.metmx)  #do not call self.forward cause it might be rewriten
-   
-        self.bsmx = self.BSMXtrain(segdata,trRN,alpha)  #train bsmx
-        self.metmx = self.metTrain(self.metmx,frRT,beta)
-        #show_dia = int(len(self.bsmx[0])**(1/2))
-        #plt.matshow(np.reshape(self.bsmx[0],(show_dia,show_dia)))
-        return self.metmx  #whatever
-    
-    def BSMXtrain(self,segdata,trRN,alpha,frRT=None):   #train bsmx only
-        if frRT is None:
-            frRT = self.firing(self.bsmx,segdata,self.metmx)
-        bmu = self.find_bmu(frRT)
-        
-        for i in range(len(segdata)):
-            self.bsmx[bmu[i]] += frRT[i][bmu[i]]*segdata[i]*alpha
+    def SEGtrain(self,segdata,trRN,alpha,reSL):  #training in one segament
+
+        dlen = len(segdata)
+        av = int(dlen*reSL//self.nnodes)  #max limit of fire freq 
+        frRT = self.firing(self.bsmx,segdata)
+
+        Ebmu = self.find_Ebmu(frRT,av)
+        #print(Ebmu.shape,max(Ebmu),bsmxp.shape,frRTp.shape)
+        for i in range(dlen):
+            self.bsmx[Ebmu[i]] += frRT[i][Ebmu[i]]*segdata[i]*alpha
             #core of training. If frRT[a,b]==0, bsmx no change
-        self.bsmx += trRN*self.inRN(self.bsmx)*len(segdata)   #use random trRN
+        self.bsmx += trRN*self.inRN(self.bsmx)*dlen   #use random trRN
         #print(self.bsmx)
         self.bsmx = self.normalize(self.bsmx)  #normalize after learning and RNing
         return self.bsmx
+
     
-    def metTrain(self,metmx,frRT,beta):  #UNsupervised metMX training
-        bmu = self.find_bmu(frRT)
-        freq = self.bmu_freq(bmu,self.nnodes)  #freq: firing frequency
-        capa = len(frRT)/self.nnodes #goal for freq: avg firing freq
-        metmx += ((freq-capa)/capa)*beta  #freq high, metmx +
-        # -∞ < metmx < +∞
-        print('fire freq = ',freq)
-        print('metmx = ',self.metmx)
-        print('metmx avg = ',np.sum(self.metmx)/self.nnodes)
-        #print('frRT = ',frRT)
-        return metmx
-    
-    def Pfiring(self,mx,data,metmx):   #when width of data smaller than mx, fill with 0s
-        Plen = mx.shape[-1]-data.shape[-1]   #how much smaller
-        onehotLB = np.zeros((len(data),Plen))     #prepare onehot label matrix
-        duodata = np.hstack([data,onehotLB])
+    def Pfiring(self,mx,data):   #when width of data smaller than mx, fill with 0s
+        nlb = mx.shape[-1] - data.shape[-1]
+        Pmx = mx[:,:-nlb]
         #NO NEED more normalize cause only add 0s
-        frRT = self.firing(mx,duodata,metmx)
+        import timeit
+        
+        start = timeit.default_timer()
+        frRT = self.firing(Pmx,data)
+        stop = timeit.default_timer()
+        print('FR Time: ', stop - start)
         return frRT
 
         
-    def firing(self,mx,data,metmx):   #frRT: fire rate with metricMX
-        dtrt = np.dot(data,mx.T)   #dtrt: dot fire rate, not final fire rate
-        dt_sign = np.sign(dtrt)
-        frRT = dt_sign*(abs(dtrt)**(self.reSL**metmx))   #use self.reSL here, to get a better curve
+    def firing(self,mx,data):   #frRT: fire rate with metricMX
+        frRT = np.dot(data,mx.T)  #dtrt: dot fire rate, not final fire rate
         #!!!do NOT normalize result   !!!but must normlize input
         return frRT
     
@@ -348,6 +337,29 @@ class NN(Layer):
     def find_bmu(self,frRT):   #best match unit, works even for high dimention 
         bmu = np.argmax(frRT,axis=-1)
         return bmu
+
+    def find_Ebmu(self,frRT,av):  #bmu with equality 
+        MfrRT = np.pad(frRT,((0,0),(1,0)),'constant')  #add 0s as node #0, for argmax of 0s column = 0 
+        bmu = np.zeros(len(frRT))   #creat empty bmu list to fill
+        
+        for i in range(frRT.shape[-1]):      
+            Tbmu = np.argmax(MfrRT,axis=-1)  #calculate bmu every loop 
+            uni,s_freq = np.unique(Tbmu,return_counts=True)
+            MXnode = uni[np.argmax(s_freq[1:])+1] #find out nodes that fires most
+            
+            if np.max(s_freq[1:])>av:  #first node(0s) not included
+                MXf = MfrRT[:,MXnode]   #select its frRT
+                bmS = np.argpartition(MXf, -av)[-av:]  #findout top samples 
+                bmu[bmS] = MXnode  #fill to bmu list
+                MfrRT[bmS] = 0    #clear frRT row & column, will not apear again in bmu
+                MfrRT[:,MXnode]= 0
+             
+            else:
+                bmu[Tbmu>0]=Tbmu[Tbmu>0]   #fill rest of bmus
+                break #stop until no hit freq>av
+        bmu = (bmu-1).astype(int)   #remove 0s column
+        return bmu
+            
     
     def inRN(self,matrix):    #generate random noise mx, the same size as matrix
         ms = np.shape(matrix)
@@ -362,7 +374,8 @@ class NN(Layer):
     
     def forward(self,indata):   #forward without training, output to next layer
         indata = self.normalize(indata,'UV')
-        outdata = self.Pfiring(self.bsmx,indata,self.metmx)
+
+        outdata = self.Pfiring(self.bsmx,indata)
         #outdata = self.rt2oh(bsrt) #one hot
         return outdata
     
@@ -371,48 +384,78 @@ class NN_MP(NN):   #training & maxpooling layer. Only init_train and us_train. s
     def __init__(self,nnodes,MPsize,MPdia,MPstride,RN,alpha,beta,gamma,delta,ep,stepL,inMD,reSL,TP,SPlim):
         super().__init__(nnodes,RN,alpha,beta,gamma,delta,ep,stepL,inMD,reSL)
         self.SPlim = SPlim    #bsdata training sample limit
-        self.TP = TP      #TP filter
+        self.TP = TP      #TP filter 
         self.MPsize = MPsize     #maxpooling 2D size like [a,b]
         self.MPdia = MPdia        #maxpooling tiles diameter
         self.MPstride = MPstride    #maxpooling stride
         
-    def init_train(self,HDdata):   #build and unsupervised train
+    def init_train(self,HDdata,label,nlb):   #build and unsupervised train
         #HDdata: data blocks made by convolution, shape be like (dlen,14*14,5*5)
         #HDdata = self.normalize(HDdata)
         #HD normalization for TPfilter
-        bsdata = self.bsPre(HDdata,self.TP)
+        bsdata,bslabel = self.bsPre(HDdata,label,self.TP)
+        bsdata,bslabel = self.SPfilter(bsdata,bslabel,self.SPlim)
 
-        self.bsmx = self.mxinit(bsdata,self.nnodes,'sample') 
-        self.metmx = np.ones(self.nnodes)*self.gamma  #creat metric matrix, all 0s
+        duodata = self.zipper(bsdata,bslabel,nlb,self.delta)  #zip bsdata and label, normalization included
+        self.bsmx = self.mxinit(duodata,self.nnodes,'sample') 
         #frRT = self.firing(self.bsmx,HDdata,self.metmx)
         #print(np.sum(frRT[160],axis=-1),frRT.shape)
-        super().BUKtrain(bsdata,self.stepL,self.beta)  #train bsmx/metmx from bsindata but donot use outdata 
-        outdata = self.forward(HDdata) #use HDdata to output outdata
+        super().BUKtrain(duodata,self.stepL)  #train bsmx/metmx from bsindata but donot use outdata 
+
+        outdata = self.forward(HDdata) #use HDdata for output outdata
         return outdata
         
-    def bsPre(self,HDdata,TP):  #hiDimentional data to 1D, and delete non_saliency samples
+    def bsPre(self,HDdata,label,TP):  #hiDimentional data to 1D, and delete non_saliency samples
         bsdata = self.left_flat(HDdata)
-        bsdata = self.TPfilter(bsdata,bsdata,TP)  #delete weak tiles
+        bslabel = np.repeat(label,HDdata.shape[-2])
+        outbsdata = self.TPfilter(bsdata,bsdata,TP)  #delete weak tiles
+        outbslabel = self.TPfilter(bslabel,bsdata,TP)
         #bsdata = self.normalize(bsdata,'UV')   #prepare 1D training data
-        return bsdata
+        return outbsdata,outbslabel
         
     def TPfilter(self,fEdata,sDdata,TP):   #filter, delete data when sDdata tiles' sum greater than TP
         #fEdata: data to be filtered; sDdata: data as filter standard
         fdata = fEdata[np.sum(sDdata,axis=-1)>TP]
-        print(len(fEdata),len(fdata))
+        print(len(fEdata),len(fdata),TP)
         return fdata
     
+    def SPfilter(self,data1,data2,SPlim):  #randomly choose SPlim samples from data
+        if len(data1>=SPlim):
+            index = np.random.choice(len(data1),SPlim,replace=False)
+            outdata1 = data1[index]
+            outdata2 = data2[index]
+        else:
+            outdata1 = data1
+            outdata2 = data2
+            print('sorry, Splim > dataLen!')
+        return outdata1,outdata2
+    
     def forward(self,HDdata):  #forward with maxpooling
-        HDfrRT = super().forward(HDdata)   
+        HDdata[np.sum(HDdata,axis=-1)<self.TP]=0  #TP fliter
+        HDfrRT = super().forward(HDdata)
+
         tile_frRT,tile_index = self.MPtiles(HDfrRT)  #maxpooling index
         outdata = np.max(tile_frRT,axis=-2)  #max fire rate of every node in every tile
         #e.g. (dlen,12*12,nnodes)
         return outdata
     
-    def us_train(self,HDdata):  #unsupervised training
-        bsdata = self.bsPre(HDdata,self.TP)
-        super().BUKtrain(bsdata,self.stepL,self.beta)   #train with NN.BUKtrain(not NN.us_train to avoid normalization)
-        outdata = self.forward(HDdata)   #but output from forward
+    def Tforward(self,HDdata):  #forward with maxpooling
+        #HDdata[np.sum(HDdata,axis=-1)<self.TP]=0  #TP fliter
+        HDfrRT = super().forward(HDdata)
+
+        tile_frRT,tile_index = self.MPtiles(HDfrRT)  #maxpooling index
+        outdata = np.max(tile_frRT,axis=-2)  #max fire rate of every node in every tile
+        #e.g. (dlen,12*12,nnodes)
+        return outdata
+    
+    def us_train(self,HDdata,label,nlb):  #unsupervised training
+        bsdata,bslabel = self.bsPre(HDdata,label,self.TP)
+        bsdata,bslabel = self.SPfilter(bsdata,bslabel,self.SPlim)
+
+        duodata = self.zipper(bsdata,bslabel,nlb,self.delta)  #zip bsdata and label, normalization included
+        super().BUKtrain(duodata,self.stepL)  #train bsmx/metmx from bsindata but donot use outdata 
+
+        outdata = self.forward(HDdata) #use HDdata for output outdata
         return outdata
     
     def MPtiles(self,HDfrRT):

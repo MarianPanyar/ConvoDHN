@@ -20,7 +20,7 @@ import numpy as np
 import importlib
 
 import layers
-from layers import flat,oneHot,convolution,padding,NN,NN_MP,bipolar,pl_index,salience,norm,deleuze,EP
+from layers import flat,oneHot,convolution,padding,NN,NN_MP,pl_index,salience,norm
 
 #importlib.reload(GG_MP)
 importlib.reload(layers)
@@ -54,8 +54,6 @@ class model(object):
             gamma = self.gamma
         if delta is None:
             delta = self.delta
-        if ep is None:
-            ep = self.ep
         if stepL is None:
             stepL = self.stepL
         if inMD is None:
@@ -76,8 +74,8 @@ class model(object):
             print('Padding:',self.flow_size,',',P2,'Margin =',P1)  
             
         elif what=='oneHot':
-            layer = oneHot(P1)  #P1=mode
-            print('OneHot: keep ',P1)
+            layer = oneHot(P1,P2)  #P1=mode
+            print('OneHot: keep top ',P1,' values, Mode ',P2)
             
         elif what=='conv2D':  #convolution 2D
             size_in = self.flow_size[-P3]  #input 2D size
@@ -115,120 +113,128 @@ class model(object):
             self.flow_size[-1] = P1             
             self.flow_size[-2]=[v_noc,h_noc]
             print('NN and MaxPooling: ',self.flow_size, 'Matrix size = ',P1)
-            
-        elif what=='bipolar':  #enhance contract
-            #P1 = radius, P2 = halo, P3 = mode
-            layer = bipolar(self.flow_size[-1],P1,P2,P3)
-            print('biPolar: radius=',P1,'; halo=',P2,'; mode=',P3)
+
             
         elif what=='salience':
             layer = salience(P1)  #P1 = TP
-            print('Salience: TP=',P1)
+            print('Salience: TP =',P1)
             
         elif what=='norm':
             layer = norm(P1)   #P1 = mode
             print('Normalization: ',P1)
             
-        elif what=='deleuze':
-            layer = deleuze(P1)   #P1=mode
-            print('Deleuze')
-            
-        elif what=='EP':
-            layer = EP(P1)
-            print('EP: >',P1)
-            
+
         self.frame.append(layer)
         del layer
         return self.frame
     
+    
     def init_train(self,indata,label,nlb):  #unsuperviesd train each layer one by one
+        #import timeit
         for i in self.frame:
+            #start = timeit.default_timer()
+
             outdata = i.init_train(indata,label,nlb)
             indata = outdata
-            print(type(i).__name__,np.shape(outdata))
-        outdata = self.forward(indata)
-
+            print(type(i).__name__,np.shape(outdata))  
+            
+            #stop = timeit.default_timer()
+           #print('Time: ', stop - start) 
         return outdata
+
     
-#    def init_train(self,indata,label,nlb,Lweight):  #unsuperviesd train each layer one by one
-#        for i in self.frame:
-#           outdata = i.init_train(indata,label,nlb,Lweight)
-#            indata = outdata
-#            print(type(i).__name__,np.shape(outdata))      
-#        return outdata
-    
-    def us_train(self,indata,label,nlb,Tlist):
+    def us_train(self,indata,label,nlb,Tlist):   #unsupervised train after init
+        #Tlist:training cirles for each layer, like [1,1,1,3]
+        ct=0
         for i in self.frame:
-            outdata = i.us_train(indata,label,nlb)
-            indata = outdata
-            print(type(i).__name__,np.shape(outdata))
+            for j in range(Tlist[ct]):
+                outdata = i.us_train(indata,label,nlb)
+            indata = outdata   #data flow only 
+            ct=ct+1
         #outdata = self.forward(indata)
         return outdata
-#    def us_train(self,indata,label,nlb,Lweight,Tlist):   #unsupervised train after init
-        #Tlist:training cirles for each layer, like [1,1,1,3]
-#        ct=0
-#        for i in self.frame:
-#            for j in range(Tlist[ct]):
-#                outdata = i.us_train(indata,label,nlb,Lweight)
-#            indata = outdata   #data flow only 
-#            ct=ct+1
-#        return outdata
+    
+    def si_train(self,indata,label,nlb):
+        for i in self.frame:
+            #start = timeit.default_timer()
+            outdata = i.init_train(indata,label,nlb)
+            
+            if type(i)==NN:
+                for j in range(i.ep):  #if ep>0
+                    outdata = i.us_train(indata,label,nlb)
+                    print('us_train')
+            indata = outdata
+            print(type(i).__name__,np.shape(outdata))  
+            
+            #stop = timeit.default_timer()
+           #print('Time: ', stop - start) 
+        return outdata
     
 
-    def So_train(self,indata,label,nlb,nloops,Tlist):  #Sol supervised training
+    def So_train(self,indata,label,tdata,tlabel,nlb,nloops,Esp):  #Sol supervised training
         Adata = indata+0    
         Alabel = label+0
         
-        i = self.frame[-1]
-        #i.init_train(Adata,Alabel,nlb,Lweight)
+        #i.init_train(Adata,Alabel,nlb)
 
         for j in range(nloops):
+            #self.frame[-1].delta=(delta2-delta1)*(j/(nloops-1))+delta1
+            Aoutdata = self.si_train(Adata,Alabel,nlb)
+            #self.us_train(Adata,Alabel,nlb,Tlist)
             
-            for k in range(Tlist):
-                i.us_train(Adata,Alabel,nlb)
-            Aoutdata = i.forward(Adata)
-            B2L = self.find_B2L(i.bsmx,nlb)
-            Elist = self.So_test(Aoutdata,Alabel,B2L)
+            #Aoutdata = self.forward(Adata)
+            B2L = self.find_B2L(self.frame[-1].bsmx,nlb)
+            p_label,Elist = self.So_test(Aoutdata,Alabel,B2L)
             print(sum(Elist))
-            Sodata = Adata[np.where(Elist==0)]
-            print(len(Sodata))
-            Solabel = Alabel[np.where(Elist==0)]
             
+            Sodata = Adata[np.where(Elist==0)]
+            Solabel = Alabel[np.where(Elist==0)]
+            Sodata,Solabel = self.piano(Sodata,Solabel,Esp)
+            print(len(Sodata))
+            #Adata = Adata[np.where(Elist==1)]
+            #Alabel = Alabel[np.where(Elist==1)]
             Adata = np.concatenate((Adata,Sodata),axis=0)
             Alabel = np.concatenate((Alabel,Solabel),axis=0)
             print(len(Adata))
             
+            B2L = self.find_B2L(self.frame[-1].bsmx,10)
+            outdata = self.Tforward(tdata)
+            self.So_test(outdata,tlabel,B2L)
+            
             #Adata,Alabel = self.S_shuffle(Adata,Alabel)
+            #shuffle in BUKtrain
         return Elist
     
-    def find_B2L(self,bsmx,nlb):
-        tailmx = bsmx[:,-nlb:]
-        B2L = np.argmax(tailmx,axis=-1)
+    def find_B2L(self,bsmx,nlb):  #final NN's lower half = label
+        tailmx = bsmx[:,-nlb:]    #tail = onthot label
+        B2L = np.argmax(tailmx,axis=-1)    #label for each node in bsmx
         return B2L
     
-    def So_test(self,outdata,label,B2L):
+    def piano(self,data,label,Esp):
+        if Esp>=1:
+            data = np.repeat(data,Esp,axis=0)
+            label = np.repeat(label,Esp,axis=0)
+        else:
+            index = np.random.choice(len(data),int(len(data)*Esp),replace=False)
+            data = data[index]
+            label = label[index]
+        return data,label
+            
+            
+    def So_test(self,outdata,label,B2L):  #use output predict label
         bmu = self.find_bmu(outdata)
         p_label = B2L[bmu]
         Elist = self.verf(p_label,label)
-        return Elist
+        return p_label,Elist
         
             
-    def S_shuffle(self,arrayA,arrayB):
+    def S_shuffle(self,arrayA,arrayB):   #
         Sindex = np.random.permutation(len(arrayA))
         newA = arrayA[Sindex]
         newB = arrayB[Sindex]
         return newA,newB         
 
-    def LLtestTrain(self,train_data,train_label,test_data,test_label,nlb): #forward, no training, last-layer-prediction
-        train_outdata = self.forward(train_data)
-        LLapmx = self.LLapmxTrain(train_outdata,train_label,self.frame[-1].nnodes,nlb)
-        
-        test_outdata = self.forward(test_data)
-        test_bmu = self.find_bmu(test_outdata)
-        testP_label,testP_it = self.LLprophet(test_bmu,LLapmx) #use last layer to predict 
-        
-        Elist = self.verf(testP_label,test_label)
-        return Elist
+
     
     def forward(self,indata): #pure forward without training or prediction
         for i in self.frame:
@@ -236,13 +242,12 @@ class model(object):
             indata = outdata
         return outdata
     
-    
-    def sLLtestTrain(self,outdata,label,nlb):
-        LLapmx = self.LLapmxTrain(outdata,label,self.frame[-1].nnodes,nlb)
-        bmu = self.find_bmu(outdata)
-        P_label,P_it = self.LLprophet(bmu,LLapmx)
-        Elist = self.verf(P_label,label)
-        return Elist
+    def Tforward(self,indata): #forward for testing
+        for i in self.frame:
+            outdata = i.Tforward(indata)
+            indata = outdata
+        return outdata
+
     
     def verf(self,p_label,label):   #verify prediction label       
         Elist = np.equal(p_label,label)+0    #1 if equal,0 if unequal
@@ -250,26 +255,12 @@ class model(object):
         #nlb = max(label)+1
         print('score: ',np.sum(Elist)/datalen)     #prediction score
         return Elist
-    
-    def LLapmxTrain(self,frRT,label,nnodes,nlb):  #train/creat apmx(renew every time)
-        LLapmx = np.zeros((nnodes,nlb))  #make new apmx 
-        bmu = self.find_bmu(frRT)
-        for i in range(len(label)):
-            LLapmx[bmu[i],int(label[i])] += frRT[i,bmu[i]]    #add pRTs to certain apmx       
-        LLapmx = self.normalize(LLapmx)
-        return LLapmx
+
     
     def find_bmu(self,frrt):   #best match unit, works even for high dimensions 
         bmu = np.argmax(frrt,axis=-1)
         return bmu
-    
-    def LLprophet(self,bmu,apmx):  #predict label
-        aplb = np.argmax(apmx,axis=-1)  #only care the max of apmx
-        pr_label = aplb[bmu]
-        apit = np.max(apmx,axis=-1)
-        pr_it = apit[bmu]   #how strong the prediction is
-        return pr_label,pr_it 
-    
+
 #    def LLprophet(self,outdata,apmx): #predict label for last layer(only one column)
 #        OHoutdata = self.rt2oh(outdata)  #one hot
 #        pLabel = np.argmax(pRT2D,axis=-1)   #predict label
@@ -277,35 +268,8 @@ class model(object):
 #        pBMU = np.argmax(outdata,axis=-1)   #which node is using when making prediction
 #        return pLabel,pRT,pBMU
         
-    def ALprophet(self,outdata,apmx):  #(all layers) predict label and how strong the prediction is
-        OHoutdata = self.rt2oh(outdata)  #one hot
-        pRT3D = np.dot(OHoutdata,apmx)  #fire-rate of every column for every label
-        
-        pRT = np.max(pRT3D,axis=(-1,-2))   #predict rate, how strong every prediction is
-        COLlist = np.argmax(np.max(pRT3D,axis=-1),axis=-1)   #which column has the strongest prediction
 
-        COLpLabel = np.argmax(pRT3D,axis=-1)  #every column's predict label
-        pLabel = COLpLabel[np.arange(len(COLlist)),COLlist]  
-        
-        COLbmu = np.argmax(OHoutdata,axis=-1)  #every column's bmu
-        pBMU = COLbmu[np.arange(len(COLlist)),COLlist]  #strongest bmu who makes prediction
-        return pLabel,pRT,pBMU
-        
-    def rt2oh(self,mx):    #one hot bmu*rate array(convert non-max rate unit to 0). 
-        #works for hi-dim
-        mxT = mx.T+0
-        #mxT[mxT == mxT.max(0)] = 1
-        mxT[mxT != mxT.max(0)] = 0
-        return mxT.T
-    
-    def vote(self,lr_label,lr_frrt):
-        #vote to decide predic label
-        ele_layer = np.argmax(lr_frrt,axis=0)
-        print(ele_layer)
-        #ele_layer = np.array(ele_layer)
-        #ele = ele_layer.astype(int)
-        pr_label = lr_label[ele_layer]
-        return pr_label
+
     
     def normalize(self,data,norm_mode='UV'):
         #universal normalization tool, now works for hi-dim
